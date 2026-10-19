@@ -25,26 +25,34 @@ def build_bronze(
     cache_dir: Path = config.CACHE_DIR,
     manifest_path: Path = config.MANIFEST_PATH,
 ) -> dict[str, int]:
-    lookup = manifest.manifest_lookup(manifest_path)
+    lookup = manifest.validate_bronze_inventory(bronze_dir, manifest_path)
 
     # ---- FreeNewsAPI -----------------------------------------------------------------
     con.execute("DROP TABLE IF EXISTS bronze.freenewsapi_raw")
     con.execute(
         """CREATE TABLE bronze.freenewsapi_raw (
-               raw_id VARCHAR, file_name VARCHAR, file_sha256 VARCHAR,
-               fetched_utc TIMESTAMP, query VARCHAR, raw_json VARCHAR)"""
+               raw_id VARCHAR, file_path VARCHAR, file_name VARCHAR, file_sha256 VARCHAR,
+               manifest_id VARCHAR, manifest_source VARCHAR, source_url VARCHAR,
+               fetched_utc TIMESTAMP, manifest_fetch_utc TIMESTAMP, query VARCHAR,
+               license_terms VARCHAR, raw_json VARCHAR)"""
     )
     rows = []
     for path in sorted((bronze_dir / "freenewsapi").glob("*.json")):
-        meta = lookup.get(path.name)
-        sha = (meta or {}).get("sha256") or manifest.sha256_file(path)
+        meta = lookup[str(path.resolve())]
+        sha = meta["sha256"]
+        manifest_id = hashlib.sha256(
+            f"{meta['file_path']}|{sha}".encode()
+        ).hexdigest()
         items = extract_items(json.loads(path.read_text(encoding="utf-8")))
         fetched = _fetched(meta, path)
         for i, item in enumerate(items):
             rows.append({
                 "raw_id": hashlib.sha256(f"{sha}:{i}".encode()).hexdigest()[:16],
-                "file_name": path.name, "file_sha256": sha, "fetched_utc": fetched,
-                "query": (meta or {}).get("search_query", ""),
+                "file_path": meta["file_path"], "file_name": path.name, "file_sha256": sha,
+                "manifest_id": manifest_id, "manifest_source": meta["source"],
+                "source_url": meta["source_url"], "fetched_utc": fetched,
+                "manifest_fetch_utc": _fetched(meta, path), "query": meta["search_query"],
+                "license_terms": meta["license_terms"],
                 "raw_json": json.dumps(item, ensure_ascii=False),
             })
     if rows:
@@ -56,7 +64,9 @@ def build_bronze(
     cols = ", ".join(f'"{c}" VARCHAR' for c in gdelt.GDELT_COLS)
     con.execute(
         f"""CREATE TABLE bronze.gdelt_events_raw ({cols},
-            file_name VARCHAR, file_sha256 VARCHAR, fetched_utc TIMESTAMP)"""
+            file_path VARCHAR, file_name VARCHAR, file_sha256 VARCHAR, manifest_id VARCHAR,
+            manifest_source VARCHAR, source_url VARCHAR, fetched_utc TIMESTAMP,
+            manifest_fetch_utc TIMESTAMP, search_query VARCHAR, license_terms VARCHAR)"""
     )
     batch: list[pd.DataFrame] = []
 
@@ -67,14 +77,23 @@ def build_bronze(
             batch.clear()
 
     for zpath in sorted((bronze_dir / "gdelt").glob("*.export.CSV.zip")):
-        meta = lookup.get(zpath.name)
-        df = gdelt.parse_zip_cached(zpath, cache_dir)
+        meta = lookup[str(zpath.resolve())]
+        df = gdelt.parse_zip_cached(zpath, cache_dir, meta["sha256"])
         if df.empty:
             continue
         df = df.copy()
+        df["file_path"] = meta["file_path"]
         df["file_name"] = zpath.name
-        df["file_sha256"] = (meta or {}).get("sha256") or manifest.sha256_file(zpath)
+        df["file_sha256"] = meta["sha256"]
+        df["manifest_id"] = hashlib.sha256(
+            f"{meta['file_path']}|{meta['sha256']}".encode()
+        ).hexdigest()
+        df["manifest_source"] = meta["source"]
+        df["source_url"] = meta["source_url"]
         df["fetched_utc"] = _fetched(meta, zpath)
+        df["manifest_fetch_utc"] = _fetched(meta, zpath)
+        df["search_query"] = meta["search_query"]
+        df["license_terms"] = meta["license_terms"]
         batch.append(df)
         if sum(len(b) for b in batch) > 200_000:
             flush()

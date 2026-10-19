@@ -40,16 +40,16 @@ jobs:
             data/warehouse
             data/manifest.csv
             logs
-          key: civicpulse-data-${{ github.ref_name }}-${{ github.run_id }}
+          key: civicpulse-data-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             civicpulse-data-${{ github.ref_name }}-
             civicpulse-data-
 
       - name: Backfill historical GDELT and build it to Gold
-        if: ${{ !hashFiles('data/warehouse/.gdelt-history-complete') }}
+        if: ${{ !hashFiles('data/warehouse/.gdelt-history-complete-v5') }}
         run: |
           python -m civicpulse backfill
-          touch data/warehouse/.gdelt-history-complete
+          test -f data/warehouse/.gdelt-history-complete-v5
 
       - name: Run CivicPulse pipeline
         run: make data
@@ -64,4 +64,4 @@ jobs:
             data/warehouse
             data/manifest.csv
             logs
-          key: civicpulse-data-${{ github.ref_name }}-${{ github.run_id }}
+          key: civicpulse-data-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}

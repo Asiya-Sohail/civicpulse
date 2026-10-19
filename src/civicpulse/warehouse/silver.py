@@ -16,6 +16,8 @@ SILVER_COLS = [
     "published_utc", "crawled_utc", "fetched_utc", "city", "province", "region_group", "lat", "lon",
     "issue_type", "service", "urgency_score", "cameo_code", "avg_tone", "raw_topic", "country_tag",
     "is_imputed", "imputed_fields", "verification_status", "dq_flags",
+    "bronze_file_path", "bronze_file_sha256", "manifest_id", "manifest_source_url",
+    "manifest_search_query", "manifest_fetch_utc", "manifest_license_terms",
 ]
 
 
@@ -46,7 +48,11 @@ def _entities(text: str, geo_city: str | None):
 
 
 def freenewsapi_frame(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
-    raw = con.execute("SELECT raw_id, fetched_utc, raw_json FROM bronze.freenewsapi_raw").df()
+    raw = con.execute(
+        """SELECT raw_id, fetched_utc, raw_json, file_path, file_sha256, manifest_id,
+                  source_url, manifest_fetch_utc, query, license_terms
+           FROM bronze.freenewsapi_raw"""
+    ).df()
     rows = []
     for r in raw.itertuples(index=False):
         d = json.loads(r.raw_json)
@@ -62,6 +68,10 @@ def freenewsapi_frame(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
             "lat": np.nan, "lon": np.nan, "issue_type": issue, "service": service,
             "urgency_score": np.nan, "cameo_code": None, "avg_tone": np.nan,
             "raw_topic": topic, "country_tag": d.get("country", "PK"),
+            "bronze_file_path": r.file_path, "bronze_file_sha256": r.file_sha256,
+            "manifest_id": r.manifest_id, "manifest_source_url": r.source_url,
+            "manifest_search_query": r.query, "manifest_fetch_utc": r.manifest_fetch_utc,
+            "manifest_license_terms": r.license_terms,
         })
     return pd.DataFrame(rows) if rows else _empty()
 
@@ -69,7 +79,9 @@ def freenewsapi_frame(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
 def gdelt_frame(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
     g = con.execute(
         """SELECT GLOBALEVENTID, SOURCEURL, DATEADDED, SQLDATE, ActionGeo_FullName, ActionGeo_Lat,
-                  ActionGeo_Long, EventCode, AvgTone, fetched_utc FROM bronze.gdelt_events_raw"""
+                  ActionGeo_Long, EventCode, AvgTone, fetched_utc, file_path, file_sha256,
+                  manifest_id, source_url, manifest_fetch_utc, search_query, license_terms
+           FROM bronze.gdelt_events_raw"""
     ).df()
     if g.empty:
         return _empty()
@@ -93,6 +105,10 @@ def gdelt_frame(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
         "urgency_score": np.nan, "cameo_code": g["EventCode"],
         "avg_tone": pd.to_numeric(g["AvgTone"], errors="coerce"),
         "raw_topic": None, "country_tag": "PK",
+        "bronze_file_path": g["file_path"], "bronze_file_sha256": g["file_sha256"],
+        "manifest_id": g["manifest_id"], "manifest_source_url": g["source_url"],
+        "manifest_search_query": g["search_query"], "manifest_fetch_utc": g["manifest_fetch_utc"],
+        "manifest_license_terms": g["license_terms"],
     })
 
 
@@ -107,9 +123,11 @@ def build_silver(con: duckdb.DuckDBPyConnection, agent: DataQualityAgent) -> dic
     cand["published_utc"] = pd.to_datetime(cand["published_utc"])
     cand["crawled_utc"] = pd.to_datetime(cand["crawled_utc"])
     cand["fetched_utc"] = pd.to_datetime(cand["fetched_utc"])
+    cand["manifest_fetch_utc"] = pd.to_datetime(cand["manifest_fetch_utc"])
     agent.log("candidate_rows", "pass", len(cand), "freenewsapi+gdelt rows entering the DQ gate")
 
     clean, quarantined = agent.run(cand)
+    agent.check_distribution(clean)
     clean["region_group"] = clean["city"].map(config.region_group)
     clean = clean.reindex(columns=SILVER_COLS)
 

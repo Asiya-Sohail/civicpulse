@@ -3,7 +3,7 @@
 GDELT publishes one export file every 15 minutes (96/day):
     http://data.gdeltproject.org/gdeltv2/YYYYMMDDHHMMSS.export.CSV.zip
 Taking all of them for 2 years is ~70,000 files, so we sample `per_day` evenly spaced slots per
-day (default 2). This is a *sample* of GDELT, and the project must say so. Raise GDELT_PER_DAY
+day (default 4). This is a *sample* of GDELT, and the project must say so. Raise GDELT_PER_DAY
 for more volume. Original zips are kept untouched (bronze); the Pakistan-only rows
 (ActionGeo_CountryCode == PK) are extracted from them when the warehouse is built.
 """
@@ -161,16 +161,23 @@ def parse_zip(zip_path: Path) -> pd.DataFrame:
     return df[df["ActionGeo_CountryCode"] == "PK"].reset_index(drop=True)
 
 
-def parse_zip_cached(zip_path: Path, cache_dir: Path) -> pd.DataFrame:
-    """Parsing 1,000+ zips on every rebuild is slow, so the PK slice is cached as parquet."""
+def parse_zip_cached(
+    zip_path: Path, cache_dir: Path, source_sha256: str | None = None
+) -> pd.DataFrame:
+    """Cache the PK slice only while its source archive hash remains unchanged."""
     cache = cache_dir / "gdelt_pk" / (zip_path.name.split(".")[0] + ".parquet")
-    if cache.exists():
+    checksum = source_sha256 or manifest.sha256_file(zip_path)
+    checksum_file = cache.with_suffix(".sha256")
+    if cache.exists() and checksum_file.exists() and checksum_file.read_text(encoding="ascii").strip() == checksum:
         return pd.read_parquet(cache)
     df = parse_zip(zip_path)
     cache.parent.mkdir(parents=True, exist_ok=True)
     tmp = cache.with_suffix(".tmp")
     df.to_parquet(tmp, index=False)
-    tmp.rename(cache)
+    tmp.replace(cache)
+    checksum_tmp = checksum_file.with_suffix(".tmp")
+    checksum_tmp.write_text(checksum, encoding="ascii")
+    checksum_tmp.replace(checksum_file)
     return df
 
 

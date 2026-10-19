@@ -8,8 +8,8 @@ Committed as the initial source declaration. No synthetic data is used. No Kaggl
 | Publisher | FreeNewsAPI.ai (freenewsapi.ai) | The GDELT Project (gdeltproject.org) |
 | Access | Keyless REST search, `country=PK`, strict country filter | Public HTTP files, no key: `http://data.gdeltproject.org/gdeltv2/YYYYMMDDHHMMSS.export.CSV.zip` |
 | How we use it | Hourly search, sorted by crawl time, with a 4-hour overlap and paged results | 15-minute export files for the last ~2 years, filtered to `ActionGeo_CountryCode = PK` |
-| Sampling | none | `GDELT_PER_DAY` evenly spaced files per day (default 2 of 96). This is a **sample** of GDELT, not the full archive. |
-| License | FreeNewsAPI.ai terms; link to original publisher URLs and review provider terms before redistributing data | Unlimited, unrestricted use incl. commercial, free; **must cite the GDELT Project and link https://www.gdeltproject.org/** |
+| Sampling | none | `GDELT_PER_DAY` evenly spaced files per day (default 4 of 96). This is a **sample** of GDELT, not the full archive. |
+| License | FreeNewsAPI.ai permits use, storage, and processing of API data; link to original publisher URLs. Article text remains publisher-owned and FreeNewsAPI grants no licence to it: https://freenewsapi.ai/legal/terms | Unlimited, unrestricted use incl. commercial, free; **must cite the GDELT Project and link https://www.gdeltproject.org/** |
 | Content | Stable article ID, title, publication/crawl timestamps, publisher, URL, country and categories | Event records: CAMEO code, location, tone, source URL (no article text) |
 
 ## Known limitations (stated up front)
@@ -20,5 +20,11 @@ Committed as the initial source declaration. No synthetic data is used. No Kaggl
   'unverified'` until matched to an official source.
 
 ## Provenance
-Every raw file is logged in `data/manifest.csv`: source URL, search query, UTC fetch time, SHA-256, license.
-Rebuild everything with `make data`.
+Every raw file is logged in `data/manifest.csv`: source URL, request/query, UTC fetch time, SHA-256, byte count, and license/terms. Each build rehashes every Bronze file and fails if the manifest and filesystem disagree. Silver and Gold event rows retain the manifest ID, raw path, SHA-256, request, fetch time, source URL, and terms; hourly Gold rows retain their contributing manifest IDs and raw paths.
+
+`make data` performs the configured historical backfill if its completion marker is absent or stale, then fetches current FreeNewsAPI results and recent GDELT slots before rebuilding Bronze, Silver, and Gold. Backfill samples at least four evenly spaced GDELT exports per day over at least 730 days. The build command enforces at least 60,000 legitimate Bronze rows before reporting success. A 404 is counted as an unavailable export slot; network or parse failures stop the backfill before the completion marker is written.
+
+## Official-source status
+NDMA is a credible original Pakistani civic/disaster source, but its [Terms and Conditions](https://ndma.gov.pk/terms-and-conditions) state that content is for personal, non-commercial access and prohibit unauthorized reproduction/distribution. Its [robots.txt](https://ndma.gov.pk/robots.txt) disallows `/api`. Therefore NDMA is **not ingested** by this project without explicit reuse permission or a suitable open licence. This means the project currently has two media-derived sources, not an authoritative official source; GDELT and FreeNewsAPI are not fully independent original reporting sources.
+
+The deterministic pre-evaluation forecasting baseline is weekly seasonal naive: predict each city's and issue type's count for an hour using the count from the same UTC hour one week earlier (t−168 hours), treating unobserved city/issue/hour bins as zero within the declared observation window. Freeze the chronological holdout and report MAE against it before evaluating any more complex model. No performance result is claimed.

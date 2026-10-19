@@ -15,6 +15,7 @@ def run_build(
     bronze_dir: Path = config.BRONZE_DIR,
     cache_dir: Path = config.CACHE_DIR,
     manifest_path: Path = config.MANIFEST_PATH,
+    minimum_raw_rows: int = 0,
 ) -> dict:
     run_id = "run_" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "_" + uuid.uuid4().hex[:6]
     started = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -36,11 +37,23 @@ def run_build(
             con.execute(f"CREATE OR REPLACE TABLE _last_good_{name} AS SELECT * FROM gold.{name}")
     try:
         b = bronze.build_bronze(con, bronze_dir, cache_dir, manifest_path)
+        stats.update({"bronze_freenewsapi": b["freenewsapi"], "bronze_gdelt": b["gdelt"]})
+        raw_total = b["freenewsapi"] + b["gdelt"]
+        if raw_total < minimum_raw_rows:
+            agent.log(
+                "raw_dataset_volume", "flag", raw_total,
+                f"raw Bronze row count {raw_total} is below required minimum {minimum_raw_rows}",
+                layer="bronze", table="bronze.raw_sources",
+            )
+            raise RuntimeError(
+                f"Raw Bronze row count {raw_total:,} is below required minimum {minimum_raw_rows:,}"
+            )
         s = silver.build_silver(con, agent)
         g = gold.build_gold(con)
         agent.gate_gold()
         gold.build_freshness(con, agent.freshness, run_id)
-        stats |= {"bronze_freenewsapi": b["freenewsapi"], "bronze_gdelt": b["gdelt"], **s, **g}
+        agent.persist_distribution_baseline()
+        stats |= {**s, **g}
     except Exception as exc:  # the failure itself must be in the audit trail
         status, error = "FAILED", f"{type(exc).__name__}: {exc}"
         # Roll back Gold only; keep the previous trusted version if the new build fails.

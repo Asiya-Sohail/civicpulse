@@ -40,12 +40,15 @@ lookback-window setting for hourly polling.
 make test        # run the test suite
 make probe       # FreeNewsAPI connectivity and response shape
 make freenewsapi # one live Pakistan fetch
-make gdelt       # one-time historical GDELT backfill (sampled; first run is slow)
+make gdelt       # download the configured sampled GDELT history only
 make backfill    # fetch historical GDELT and build all available raw data through Gold
-make data        # incremental recent fetch + rebuild bronze/silver/gold + DQ gate
+make data        # clean data: historical backfill, current fetches, integrity checks, 60k gate, and full build
 make stats       # row counts, volume rule check, DQ summary, freshness
 ```
 Quick GDELT test first: `python -m civicpulse fetch-gdelt --per-day 1 --max-files 20`, then `make build`.
+The normal default is four evenly spaced GDELT exports per day. `make data` uses a versioned marker
+to avoid repeating the historical fetch on hourly runs; if GDELT downloads fail, the build does not
+write that marker and a later run can resume.
 
 ## 6. Inspect results
 In a terminal: `python -c "import duckdb; print(duckdb.connect('data/warehouse/civicpulse.duckdb').sql('select * from quality_log order by logged_at_utc desc limit 30'))"`
@@ -93,8 +96,8 @@ The repository includes two workflows:
 - `.github/workflows/hourly-data.yml`: runs at minute 17 of every UTC hour, and can also be started with **Actions → CivicPulse hourly data → Run workflow**.
 - `.github/workflows/hourly-watchdog.yml`: checks every 15 minutes and dispatches a recovery run if the hourly workflow is overdue or has failed.
 
-On the first runner without the `.gdelt-history-complete` marker, the hourly workflow runs the
-sampled historical backfill and builds it through Bronze, Silver, and Gold before its normal
+On the first runner without the `.gdelt-history-complete-v5` marker, the hourly workflow runs the
+four-per-day sampled historical backfill and builds it through Bronze, Silver, and Gold before its normal
 incremental update. That first run takes longer. It marks the backfill complete only after
 downloads and the warehouse build succeed; subsequent runs restore that marker and only fetch
 recent GDELT slots. Raw archives, the manifest, parquet parse cache, DuckDB warehouse, and logs

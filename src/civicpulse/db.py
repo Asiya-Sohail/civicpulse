@@ -23,8 +23,21 @@ def ensure_meta(con: duckdb.DuckDBPyConnection) -> None:
         """
         CREATE TABLE IF NOT EXISTS quality_log (
             run_id VARCHAR, logged_at_utc TIMESTAMP, layer VARCHAR, table_name VARCHAR,
-            check_name VARCHAR, action VARCHAR, rows_affected BIGINT, detail VARCHAR
+            check_name VARCHAR, rule_name VARCHAR, action VARCHAR, rows_affected BIGINT,
+            detail VARCHAR, reason VARCHAR
         )"""
+    )
+    quality_columns = {
+        row[1] for row in con.execute("PRAGMA table_info('quality_log')").fetchall()
+    }
+    for name, dtype in (("rule_name", "VARCHAR"), ("reason", "VARCHAR")):
+        if name not in quality_columns:
+            con.execute(f"ALTER TABLE quality_log ADD COLUMN {name} {dtype}")
+    con.execute("UPDATE quality_log SET rule_name = check_name WHERE rule_name IS NULL")
+    con.execute(
+        """UPDATE quality_log
+           SET reason = coalesce(nullif(detail, ''), 'Legacy audit row did not record a reason')
+           WHERE reason IS NULL"""
     )
     con.execute(
         """
@@ -45,3 +58,9 @@ def ensure_meta(con: duckdb.DuckDBPyConnection) -> None:
     # Existing local warehouses keep their run history under the old source-column name.
     if old_column and not new_column:
         con.execute("ALTER TABLE pipeline_runs RENAME COLUMN bronze_newsagent TO bronze_freenewsapi")
+    con.execute(
+        """CREATE TABLE IF NOT EXISTS dq_distribution_baseline (
+               dimension VARCHAR, category VARCHAR, row_count BIGINT, proportion DOUBLE,
+               baseline_run_id VARCHAR, recorded_at_utc TIMESTAMP,
+               PRIMARY KEY (dimension, category))"""
+    )

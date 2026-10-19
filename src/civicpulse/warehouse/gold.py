@@ -14,7 +14,9 @@ def build_gold(con: duckdb.DuckDBPyConnection) -> dict[str, int]:
         SELECT 'r_' || article_id AS row_id, source, source_record_id, publisher, publisher_domain, title, url,
                published_utc, crawled_utc, published_utc + {PKT} AS published_pkt_display,
                city, province, region_group, lat, lon, issue_type, service,
-               urgency_score, is_imputed, imputed_fields, verification_status, dq_flags
+               urgency_score, is_imputed, imputed_fields, verification_status, dq_flags,
+               bronze_file_path, bronze_file_sha256, manifest_id, manifest_source_url,
+               manifest_search_query, manifest_fetch_utc, manifest_license_terms
         FROM silver.articles
         WHERE issue_type <> 'Other' AND article_id IS NOT NULL
         """
@@ -25,14 +27,17 @@ def build_gold(con: duckdb.DuckDBPyConnection) -> dict[str, int]:
         CREATE OR REPLACE TABLE gold.hourly_issue_counts AS
         SELECT 'h_' || substr(md5(CAST(hour_utc AS VARCHAR) || '|' || city || '|' || issue_type), 1, 16) AS row_id,
                hour_utc, hour_utc + {PKT} AS hour_pkt_display, region_group, city, issue_type,
-               n_reports, mean_urgency, max_urgency, n_imputed, n_sources
+               n_reports, mean_urgency, max_urgency, n_imputed, n_sources,
+               manifest_ids, bronze_file_paths
         FROM (
             SELECT date_trunc('hour', published_utc) AS hour_utc, region_group,
                    coalesce(city, 'Unknown') AS city, issue_type,
                    count(*) AS n_reports, avg(urgency_score) AS mean_urgency,
                    max(urgency_score) AS max_urgency,
                    count(*) FILTER (WHERE is_imputed) AS n_imputed,
-                   count(DISTINCT source) AS n_sources
+                   count(DISTINCT source) AS n_sources,
+                   string_agg(DISTINCT manifest_id, ',' ORDER BY manifest_id) AS manifest_ids,
+                   string_agg(DISTINCT bronze_file_path, ',' ORDER BY bronze_file_path) AS bronze_file_paths
             FROM gold.issue_events
             GROUP BY 1, 2, 3, 4
         )

@@ -24,14 +24,16 @@ FREENEWSAPI_COUNTRY = "PK"
 FREENEWSAPI_PAGE_SIZE = 100
 FREENEWSAPI_LOOKBACK_HOURS = int(os.getenv("FREENEWSAPI_LOOKBACK_HOURS", "4"))
 FREENEWSAPI_LICENSE = (
-    "FreeNewsAPI.ai public news search API; link to original publisher URLs and review "
-    "https://freenewsapi.ai/legal/terms before redistributing article data."
+    "FreeNewsAPI.ai Terms of Use permit API data use, storage, and processing; link to the "
+    "original publisher URL. Article text remains publisher-owned; FreeNewsAPI grants no "
+    "licence to that text. https://freenewsapi.ai/legal/terms"
 )
 
 # ---- Source 2: GDELT 2.0 Events (historical) ---------------------------------------------
 GDELT_BASE_URL = "http://data.gdeltproject.org/gdeltv2/"
-GDELT_DAYS_BACK = int(os.getenv("GDELT_DAYS_BACK", "740"))
-GDELT_PER_DAY = int(os.getenv("GDELT_PER_DAY", "2"))
+GDELT_DAYS_BACK = max(730, int(os.getenv("GDELT_DAYS_BACK", "740")))
+GDELT_PER_DAY = max(4, int(os.getenv("GDELT_PER_DAY", "4")))
+GDELT_BACKFILL_MARKER = DATA_DIR / "warehouse" / ".gdelt-history-complete-v5"
 GDELT_LICENSE = (
     "GDELT Project terms: unlimited, unrestricted use (academic, commercial, governmental) "
     "without fee; any use or redistribution must cite the GDELT Project and link "
@@ -43,6 +45,7 @@ STALE_AFTER_HOURS = float(os.getenv("STALE_AFTER_HOURS", "3"))
 PK_BBOX = (23.5, 37.2, 60.8, 77.9)  # lat_min, lat_max, lon_min, lon_max (rough Pakistan box)
 MIN_PUBLISHED = "2015-02-01"  # GDELT 2.0 starts Feb 2015
 MIN_DOCS, MIN_ROWS = 5_000, 50_000  # hackathon volume requirement (docs OR rows)
+DATASET_RAW_ROW_TARGET = 60_000
 
 # ---- Entity rules ------------------------------------------------------------------------
 KNOWN_CITIES = [

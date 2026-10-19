@@ -12,7 +12,7 @@ def _fetch_freenewsapi() -> bool:
         paths = freenewsapi.fetch_feed()
         print(f"FreeNewsAPI: saved {len(paths)} raw page(s)")
         return True
-    except Exception as e:
+    except RuntimeError as e:
         print(f"FreeNewsAPI fetch failed: {type(e).__name__}: {e}")
         return False
 
@@ -39,7 +39,20 @@ def _backfill_gdelt() -> None:
     if counts["failed"]:
         raise RuntimeError(f"GDELT historical backfill has {counts['failed']} failed downloads")
     print("Building Bronze, Silver, and Gold from all downloaded historical and live raw files.")
-    _print_build(pipeline.run_build())
+    _print_build(pipeline.run_build(minimum_raw_rows=config.DATASET_RAW_ROW_TARGET))
+    config.GDELT_BACKFILL_MARKER.parent.mkdir(parents=True, exist_ok=True)
+    config.GDELT_BACKFILL_MARKER.write_text(
+        f"gdelt_per_day={config.GDELT_PER_DAY};days_back={config.GDELT_DAYS_BACK}\n",
+        encoding="utf-8",
+    )
+
+
+def _ensure_historical_backfill() -> None:
+    expected = f"gdelt_per_day={config.GDELT_PER_DAY};days_back={config.GDELT_DAYS_BACK}\n"
+    marker = config.GDELT_BACKFILL_MARKER
+    if not marker.exists() or marker.read_text(encoding="utf-8") != expected:
+        print("Historical GDELT backfill is missing or uses a different sample density.")
+        _backfill_gdelt()
 
 
 def _print_build(stats: dict) -> None:
@@ -62,6 +75,8 @@ def _stats() -> None:
     ok = docs >= config.MIN_DOCS or rows >= config.MIN_ROWS
     print(f"volume rule (>= {config.MIN_DOCS:,} docs OR >= {config.MIN_ROWS:,} rows): "
           f"docs={docs:,} rows={rows:,} -> {'MET' if ok else 'NOT MET'}")
+    print(f"raw dataset target (>= {config.DATASET_RAW_ROW_TARGET:,} rows): "
+          f"{'MET' if rows >= config.DATASET_RAW_ROW_TARGET else 'NOT MET'}")
     print("\nLatest DQ summary:")
     print(con.execute("SELECT * FROM gold.dq_summary ORDER BY 1").df().to_string(index=False))
     print("\nFreshness:")
@@ -71,7 +86,7 @@ def _stats() -> None:
 def main() -> None:
     p = argparse.ArgumentParser(prog="civicpulse")
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("data", help="incremental fetch of both sources, then rebuild bronze/silver/gold + DQ gate")
+    sub.add_parser("data", help="ensure historical backfill, fetch current sources, then rebuild all layers")
     sub.add_parser("history", help="download sampled historical GDELT data (one-time/backfill)")
     sub.add_parser("backfill", help="download historical GDELT sample and build all raw data to Gold")
     sub.add_parser("build", help="rebuild the warehouse from files already on disk")
@@ -84,18 +99,21 @@ def main() -> None:
     a = p.parse_args()
 
     if a.cmd == "data":
-        # Hourly job: do not rescan/download the entire historical GDELT window every run.
-        news_ok = _fetch_freenewsapi()
-        print("GDELT recent slots:", gdelt.fetch_recent(hours=4))
-        _print_build(pipeline.run_build())
-        if not news_ok:
-            print("WARNING: FreeNewsAPI fetch failed; warehouse was rebuilt from existing raw files.")
+        # The marker prevents hourly full-window scans and is invalidated when the sample density changes.
+        _ensure_historical_backfill()
+        if not _fetch_freenewsapi():
+            raise RuntimeError("FreeNewsAPI fetch failed; refusing to report a complete data build")
+        recent = gdelt.fetch_recent(hours=4)
+        print("GDELT recent slots:", recent)
+        if recent["failed"]:
+            raise RuntimeError(f"GDELT recent fetch has {recent['failed']} failed download(s)")
+        _print_build(pipeline.run_build(minimum_raw_rows=config.DATASET_RAW_ROW_TARGET))
     elif a.cmd == "history":
         _fetch_gdelt()
     elif a.cmd == "backfill":
         _backfill_gdelt()
     elif a.cmd == "build":
-        _print_build(pipeline.run_build())
+        _print_build(pipeline.run_build(minimum_raw_rows=config.DATASET_RAW_ROW_TARGET))
     elif a.cmd == "fetch-freenewsapi":
         raise SystemExit(0 if _fetch_freenewsapi() else 1)
     elif a.cmd == "probe-freenewsapi":

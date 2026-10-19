@@ -9,10 +9,15 @@ from pathlib import Path
 
 from civicpulse import config
 
+RAW_SOURCE_DIRS = {"freenewsapi", "gdelt"}
 FIELDS = [
     "file_path", "source", "source_url", "search_query",
     "fetch_timestamp_utc", "sha256", "bytes", "license_terms",
 ]
+
+
+class ManifestIntegrityError(RuntimeError):
+    """Raised when on-disk Bronze files do not match their manifest records."""
 
 
 def utc_now_iso() -> str:
@@ -66,5 +71,80 @@ def append_manifest(rows: list[dict], manifest_path: Path = config.MANIFEST_PATH
 
 
 def manifest_lookup(manifest_path: Path = config.MANIFEST_PATH) -> dict[str, dict]:
-    """file name -> manifest row (file names are unique: timestamped)."""
-    return {Path(r["file_path"]).name: r for r in read_manifest(manifest_path)}
+    """Absolute file path -> manifest row."""
+    result = {}
+    for row in read_manifest(manifest_path):
+        path = Path(row["file_path"])
+        if not path.is_absolute():
+            path = config.ROOT / path
+        result[str(path.resolve())] = row
+    return result
+
+
+def validate_bronze_inventory(
+    bronze_dir: Path = config.BRONZE_DIR,
+    manifest_path: Path = config.MANIFEST_PATH,
+) -> dict[str, dict]:
+    """Require a complete, valid manifest and matching SHA-256 for every Bronze file."""
+    bronze_root = bronze_dir.resolve()
+    rows = read_manifest(manifest_path)
+    manifest_by_path: dict[str, dict] = {}
+    for row in rows:
+        raw_path = Path(row.get("file_path", ""))
+        file_path = raw_path if raw_path.is_absolute() else config.ROOT / raw_path
+        resolved = file_path.resolve()
+        try:
+            relative = resolved.relative_to(bronze_root)
+        except ValueError:
+            raise ManifestIntegrityError(f"Manifest path is outside Bronze: {row.get('file_path')}")
+        source_dir = relative.parts[0] if relative.parts else ""
+        if source_dir not in RAW_SOURCE_DIRS:
+            raise ManifestIntegrityError(f"Unknown Bronze source directory: {row.get('file_path')}")
+        missing_fields = [
+            field for field in ("source", "source_url", "search_query", "fetch_timestamp_utc", "sha256", "license_terms")
+            if not row.get(field)
+        ]
+        if missing_fields:
+            raise ManifestIntegrityError(
+                f"Manifest entry {row.get('file_path')} is missing required fields: {', '.join(missing_fields)}"
+            )
+        if row["source"] != source_dir:
+            raise ManifestIntegrityError(
+                f"Manifest source mismatch for {row['file_path']}: expected {source_dir}, got {row['source']}"
+            )
+        if str(resolved) in manifest_by_path:
+            raise ManifestIntegrityError(f"Duplicate manifest path: {row['file_path']}")
+        manifest_by_path[str(resolved)] = row
+
+    disk_files = {
+        str(path.resolve()): path
+        for path in bronze_root.rglob("*")
+        if path.is_file()
+    } if bronze_root.exists() else {}
+
+    unmanifested = sorted(set(disk_files) - set(manifest_by_path))
+    if unmanifested:
+        raise ManifestIntegrityError(
+            f"Unmanifested Bronze file(s): {', '.join(unmanifested[:5])}"
+        )
+
+    missing = sorted(set(manifest_by_path) - set(disk_files))
+    if missing:
+        raise ManifestIntegrityError(
+            f"Manifest file(s) missing from Bronze: {', '.join(missing[:5])}"
+        )
+
+    for key, path in disk_files.items():
+        entry = manifest_by_path[key]
+        actual_sha = sha256_file(path)
+        expected_sha = entry["sha256"].strip().lower()
+        if actual_sha != expected_sha:
+            raise ManifestIntegrityError(
+                f"SHA-256 mismatch for {entry['file_path']}: expected {expected_sha}, got {actual_sha}"
+            )
+        expected_bytes = entry.get("bytes")
+        if expected_bytes and int(expected_bytes) != path.stat().st_size:
+            raise ManifestIntegrityError(
+                f"Size mismatch for {entry['file_path']}: expected {expected_bytes}, got {path.stat().st_size}"
+            )
+    return manifest_by_path
