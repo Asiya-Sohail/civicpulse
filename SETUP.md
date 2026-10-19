@@ -28,21 +28,18 @@ make setup            # or:  python -m pip install -e ".[dev]"
 Then Ctrl+Shift+P > **Python: Select Interpreter** > pick `.venv`.
 (PowerShell blocks scripts? run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once.)
 
-## 4. Git + key
+## 4. Git
 ```bash
 git init && git add . && git commit -m "Initial source declaration + warehouse skeleton"
-cp .env.example .env     # Windows: copy .env.example .env
 ```
-Sign up for a free key at newsagentdata.com, then fill `.env`:
-`NEWSAGENT_API_KEY` only. The other NewsAgent settings are pre-filled and verified against their OpenAPI spec
-(`NEWSAGENT_BASE_URL` must be `https://api.newsagentdata.com` with no `/v1`).
-`.env` is git-ignored; never commit it.
+The live source is FreeNewsAPI.ai and does not require an API key. `.env.example` contains only the optional
+lookback-window setting for hourly polling.
 
 ## 5. Run
 ```bash
-make test        # 10 tests should pass
-make probe       # NewsAgent: does country=pk return Pakistani news? are field names right?
-make newsagent   # one live pull
+make test        # run the test suite
+make probe       # FreeNewsAPI connectivity and response shape
+make freenewsapi # one live Pakistan fetch
 make gdelt       # one-time historical GDELT backfill (sampled; first run is slow)
 make data        # incremental recent fetch + rebuild bronze/silver/gold + DQ gate
 make stats       # row counts, volume rule check, DQ summary, freshness
@@ -58,7 +55,7 @@ or connect SQLTools to the `.duckdb` file. Useful tables: `quality_log`, `silver
 ## 7. Schedule hourly runs on Windows (Task Scheduler)
 
 The project includes `run_hourly.ps1`. It runs the same incremental job as `make data`,
-fetches NewsAgent once per run and recent completed GDELT 15-minute slots, rebuilds the
+fetches FreeNewsAPI Pakistan articles and recent completed GDELT 15-minute slots, rebuilds the
 warehouse, and appends output to `logs/hourly-YYYY-MM-DD.log`. It does **not** download
 the full historical GDELT window every hour.
 
@@ -81,11 +78,11 @@ the full historical GDELT window every hour.
    Avoid enabling parallel instances; a new run should not overlap an unfinished run.
 7. Right-click the task → **Run**. Check `logs/` and then run `python -m civicpulse stats`.
 
-**Important:** the NewsAgent free tier shown by this project is 100 requests/day. Hourly polling is
-about 24 requests/day, but avoid running `make data` repeatedly while debugging. The provider's
-`fetched_at` is not necessarily the article's original publication time; the current field mapping
-uses it as a fallback, so freshness is feed-fetch freshness, not guaranteed publication freshness.
-GDELT's historical backfill is a sampled set of 15-minute exports, not a complete archive.
+FreeNewsAPI is keyless and documents a 20 requests/second per-IP limit. The collector makes
+sequential requests and uses a 4-hour overlapping crawl-time window to recover short scheduling
+gaps; increase `FREENEWSAPI_LOOKBACK_HOURS` for a longer recovery window. Repeated article URLs
+are deduplicated during the warehouse build. GDELT's historical backfill is a sampled set of
+15-minute exports, not a complete archive.
 
 
 ## 8. Run hourly on GitHub Actions (recommended for cloud scheduling)
@@ -98,16 +95,14 @@ The repository includes two workflows:
 ### One-time GitHub setup
 
 1. Push this project to a GitHub repository and make sure both files under `.github/workflows/` are committed to the **default branch**. Scheduled workflows run from the default branch.
-2. In GitHub, open **Settings → Secrets and variables → Actions → New repository secret**.
-3. Add `NEWSAGENT_API_KEY` with your NewsAgent API key. Do not put the key in source code or commit `.env`.
-4. Open **Settings → Actions → General → Workflow permissions**. The hourly workflow only needs read access; the watchdog declares `actions: write` in its own workflow so it can dispatch a recovery run. If your organization restricts workflow permissions, an administrator may need to permit it.
-5. Open **Actions**, enable workflows if prompted, select **CivicPulse hourly data**, and click **Run workflow** for the first test. Then check the run logs and `python -m pytest -q` results shown in the Actions job.
-6. Confirm that the watchdog workflow also runs. It checks the hourly run schedule and dispatches a recovery attempt when the latest run is overdue or failed.
+2. Open **Settings → Actions → General → Workflow permissions**. The hourly workflow only needs read access; the watchdog declares `actions: write` in its own workflow so it can dispatch a recovery run. If your organization restricts workflow permissions, an administrator may need to permit it.
+3. Open **Actions**, enable workflows if prompted, select **CivicPulse Hourly Pipeline**, and click **Run workflow** for the first test. Then check the run logs and `python -m pytest -q` results shown in the Actions job.
+4. Confirm that the watchdog workflow also runs. It checks the hourly run schedule and dispatches a recovery attempt when the latest run is overdue or failed.
 
 ### Schedule and reliability notes
 
 - Cron expressions use **UTC**. `17 * * * *` means minute 17 of every hour (for example, 12:17 UTC = 17:17 Pakistan Standard Time).
 - GitHub Actions scheduled events are best-effort: GitHub can delay or drop a scheduled start during heavy load, and no cron setup can guarantee execution at the exact second. The watchdog provides recovery, not a hard real-time SLA.
 - GitHub-hosted runners are ephemeral. The workflow uses the Actions cache to restore and save `data/` (Bronze files, manifest, cache and DuckDB state) between runs. Cache is best-effort and subject to eviction/size limits; it is not durable database storage. If losing warehouse state is unacceptable, move raw files and the database to durable object storage or a managed database before production use.
-- The hourly job calls NewsAgent once per run. A free tier of 100 requests/day permits around 24 scheduled hourly calls, but manual runs and watchdog retries also consume quota.
+- The hourly job searches FreeNewsAPI once or more per run depending on the number of result pages. Requests are sequential and stay well below the documented per-IP rate limit.
 - Runs are serialized to avoid overlapping warehouse writes. Failed jobs retain logs as a 14-day artifact when log files exist.

@@ -2,7 +2,7 @@ from civicpulse import db
 from civicpulse.ingest import gdelt
 from civicpulse.pipeline import run_build
 
-from tests.helpers import gdelt_line, write_gdelt_zip, write_newsagent
+from tests.helpers import gdelt_line, write_freenewsapi, write_gdelt_zip
 
 
 def test_gdelt_parse_keeps_only_pakistan(tmp_path):
@@ -20,6 +20,22 @@ def test_slot_stamps_sampling():
     assert s == ["20260301000000", "20260301120000", "20260302000000", "20260302120000"]
 
 
+def test_legacy_pipeline_run_source_column_is_migrated():
+    import duckdb
+
+    con = duckdb.connect(":memory:")
+    con.execute(
+        """CREATE TABLE pipeline_runs (
+               run_id VARCHAR, started_utc TIMESTAMP, finished_utc TIMESTAMP, status VARCHAR,
+               bronze_newsagent BIGINT, bronze_gdelt BIGINT, silver_rows BIGINT,
+               quarantined_rows BIGINT, gold_events BIGINT, gold_hourly BIGINT, error VARCHAR)"""
+    )
+    db.ensure_meta(con)
+    columns = {row[0] for row in con.execute("DESCRIBE pipeline_runs").fetchall()}
+    assert "bronze_freenewsapi" in columns and "bronze_newsagent" not in columns
+    con.close()
+
+
 def test_end_to_end_rebuild_is_deterministic(tmp_path):
     bronze, cache, mani, dbp = tmp_path / "bronze", tmp_path / "cache", tmp_path / "m.csv", tmp_path / "w.duckdb"
     write_gdelt_zip(bronze / "gdelt" / "20260301061500.export.CSV.zip", [
@@ -27,19 +43,19 @@ def test_end_to_end_rebuild_is_deterministic(tmp_path):
         gdelt_line(2, "https://tribune.com.pk/lahore-water-shortage?utm_source=a", "Lahore, Punjab, Pakistan", 31.5, 74.3),
         gdelt_line(3, "https://dawn.com/budget-talks", "Islamabad, Pakistan", 33.7, 73.0),   # not a civic issue
     ])
-    write_newsagent(bronze / "newsagent" / "20260301T070000Z_feed.json", [
-        {"title": "K-Electric load shedding in KHI", "url": "https://dawn.com/karachi-load-shedding-hits-city/",
-         "published_at": "2026-03-01T06:20:00Z", "urgency": 7, "country": "pk"},
-        {"title": "Traffic jam on Shahrah-e-Faisal", "url": "https://geo.tv/traffic-jam", "published_at": None,
-         "country": "pk"},
+    write_freenewsapi(bronze / "freenewsapi" / "20260301T070000Z_feed.json", [
+        {"id": "free-1", "title": "K-Electric load shedding in KHI", "url": "https://dawn.com/karachi-load-shedding-hits-city/",
+         "published_at": "2026-03-01T06:20:00Z", "sitename": "Dawn", "country": "PK"},
+        {"id": "free-2", "title": "Traffic jam on Shahrah-e-Faisal", "url": "https://geo.tv/traffic-jam",
+         "published_at": None, "host": "geo.tv", "country": "PK"},
     ])
     from civicpulse.ingest import manifest
     manifest.append_manifest([{
-        "file_path": "newsagent/20260301T070000Z_feed.json", "source": "newsagent", "source_url": "t",
-        "search_query": "country=pk", "fetch_timestamp_utc": "2026-03-01T07:00:00Z", "sha256": "abc",
+        "file_path": "freenewsapi/20260301T070000Z_feed.json", "source": "freenewsapi", "source_url": "t",
+        "search_query": "country=PK", "fetch_timestamp_utc": "2026-03-01T07:00:00Z", "sha256": "abc",
         "bytes": 1, "license_terms": "test"}], mani)     # old pull time -> feed must be flagged STALE
     first = run_build(dbp, bronze, cache, mani)
-    assert first["bronze_gdelt"] == 3 and first["bronze_newsagent"] == 2
+    assert first["bronze_gdelt"] == 3 and first["bronze_freenewsapi"] == 2
     con = db.connect(dbp)
     ev = con.execute("SELECT row_id, source, city, issue_type FROM gold.issue_events ORDER BY row_id").df()
     assert len(ev) == 3 and ev.row_id.is_unique          # duplicate Dawn link collapsed, civic rows only
@@ -55,4 +71,4 @@ def test_end_to_end_rebuild_is_deterministic(tmp_path):
     ids2 = [r[0] for r in con.execute("SELECT row_id FROM gold.issue_events ORDER BY row_id").fetchall()]
     assert ids1 == ids2
     assert con.execute("SELECT count(DISTINCT run_id) FROM quality_log").fetchone()[0] == 2  # log history kept
-    assert con.execute("SELECT status FROM gold.data_freshness WHERE source='newsagent'").fetchone()[0] == "STALE"
+    assert con.execute("SELECT status FROM gold.data_freshness WHERE source='freenewsapi'").fetchone()[0] == "STALE"

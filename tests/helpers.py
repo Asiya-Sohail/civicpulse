@@ -24,7 +24,7 @@ def write_gdelt_zip(path: Path, lines: list[str]) -> Path:
     return path
 
 
-def write_newsagent(path: Path, items: list[dict]) -> Path:
+def write_freenewsapi(path: Path, items: list[dict]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"articles": items}), encoding="utf-8")
+    path.write_text(json.dumps({"results": items}), encoding="utf-8")
     return path

@@ -27,7 +27,7 @@ except ImportError:  # pragma: no cover
 
 from civicpulse import config
 
-SOURCES = {"newsagent", "gdelt"}
+SOURCES = {"freenewsapi", "gdelt"}
 _TRACKING = re.compile(r"^(utm_|mc_)|^(fbclid|gclid|igshid)$", re.I)
 
 
@@ -103,7 +103,7 @@ class DataQualityAgent:
 
     # ---------------------------------------------------------------- FIX
     def fix(self, df: pd.DataFrame) -> pd.DataFrame:
-        for col in ("title", "url", "city", "province", "service"):
+        for col in ("title", "url", "publisher", "city", "province", "service"):
             old = df[col].copy()
             df[col] = df[col].map(_norm_text)
             n = _changed(old, df[col])
@@ -125,17 +125,18 @@ class DataQualityAgent:
         self.log("url_canonicalise", "fix" if n else "pass", n, "lower-case host, strip utm/fbclid/fragment/trailing slash")
 
         df["publisher_domain"] = df["url"].map(publisher_domain)
+        df["publisher"] = df["publisher"].fillna(df["publisher_domain"])
         df["article_id"] = df["url"].map(
             lambda u: hashlib.sha256(dedupe_key(u).encode()).hexdigest()[:16] if dedupe_key(u) else None
         )
         return df
 
     def dedupe(self, df: pd.DataFrame) -> pd.DataFrame:
-        df["_prio"] = df["source"].map({"newsagent": 0, "gdelt": 1}).fillna(2)
+        df["_prio"] = df["source"].map({"freenewsapi": 0, "gdelt": 1}).fillna(2)
         df = df.sort_values(["_prio", "published_utc"], kind="stable")
         dup = df["article_id"].notna() & df.duplicated("article_id", keep="first")
         n = int(dup.sum())
-        self.log("duplicate_links", "fix" if n else "pass", n, "kept newsagent over gdelt, then earliest")
+        self.log("duplicate_links", "fix" if n else "pass", n, "kept freenewsapi over gdelt, then earliest")
         return df[~dup].drop(columns="_prio").reset_index(drop=True)
 
     # ---------------------------------------------------------------- FILL
@@ -231,18 +232,18 @@ class DataQualityAgent:
 
     def _freshness(self, df: pd.DataFrame) -> None:
         now = pd.Timestamp.now("UTC").tz_localize(None)
-        live = df[df["source"] == "newsagent"]
+        live = df[df["source"] == "freenewsapi"]
         if live.empty:
-            self.log("stale_feed:newsagent", "flag", 0, "no NewsAgent rows loaded")
+            self.log("stale_feed:freenewsapi", "flag", 0, "no FreeNewsAPI rows loaded")
             status, last = "NO_DATA", None
         else:
             last = live["fetched_utc"].max()
             age_h = (now - last).total_seconds() / 3600
             stale = age_h > config.STALE_AFTER_HOURS
             status = "STALE" if stale else "FRESH"
-            self.log("stale_feed:newsagent", "flag" if stale else "pass", 0,
+            self.log("stale_feed:freenewsapi", "flag" if stale else "pass", 0,
                      f"last pull {age_h:.1f}h ago (limit {config.STALE_AFTER_HOURS}h)")
-        self.freshness.append({"source": "newsagent", "status": status, "last_fetch_utc": last})
+        self.freshness.append({"source": "freenewsapi", "status": status, "last_fetch_utc": last})
 
     # ---------------------------------------------------------------- orchestration
     def run(self, cand: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:

@@ -12,19 +12,11 @@ from civicpulse import config
 from civicpulse.quality.agent import DataQualityAgent
 
 SILVER_COLS = [
-    "article_id", "source", "source_record_id", "title", "url", "publisher_domain",
-    "published_utc", "fetched_utc", "city", "province", "region_group", "lat", "lon",
+    "article_id", "source", "source_record_id", "title", "url", "publisher", "publisher_domain",
+    "published_utc", "crawled_utc", "fetched_utc", "city", "province", "region_group", "lat", "lon",
     "issue_type", "service", "urgency_score", "cameo_code", "avg_tone", "raw_topic", "country_tag",
     "is_imputed", "imputed_fields", "verification_status", "dq_flags",
 ]
-
-
-def _pick(d: dict, key: str):
-    for k in config.NEWSAGENT_FIELDS[key]:
-        v = d.get(k)
-        if v not in (None, "", [], {}):
-            return v
-    return None
 
 
 def _flat(v):
@@ -53,27 +45,23 @@ def _entities(text: str, geo_city: str | None):
     return city, config.classify_issue(text), config.detect_service(text)
 
 
-def newsagent_frame(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
-    raw = con.execute("SELECT raw_id, fetched_utc, raw_json FROM bronze.newsagent_raw").df()
+def freenewsapi_frame(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    raw = con.execute("SELECT raw_id, fetched_utc, raw_json FROM bronze.freenewsapi_raw").df()
     rows = []
     for r in raw.itertuples(index=False):
         d = json.loads(r.raw_json)
-        title, url = _pick(d, "title"), _pick(d, "url")
-        topic = _flat(_pick(d, "topic"))
+        title, url = d.get("title"), d.get("url")
+        topic = _flat(d.get("categories"))
         text = f"{title or ''} {config.url_to_text(url)} {topic or ''}"
         city, issue, service = _entities(text, None)
-        urg = _pick(d, "urgency")
-        try:
-            urg = float(urg) if urg is not None else np.nan
-        except (TypeError, ValueError):
-            urg = np.nan
         rows.append({
-            "source": "newsagent", "source_record_id": str(_pick(d, "id") or r.raw_id),
-            "title": title, "url": url, "published_utc": _ts(_pick(d, "published")),
+            "source": "freenewsapi", "source_record_id": str(d.get("id") or r.raw_id),
+            "title": title, "url": url, "publisher": d.get("sitename") or d.get("host"),
+            "published_utc": _ts(d.get("published_at")), "crawled_utc": _ts(d.get("crawled_at")),
             "fetched_utc": r.fetched_utc, "city": city, "province": None,
             "lat": np.nan, "lon": np.nan, "issue_type": issue, "service": service,
-            "urgency_score": urg, "cameo_code": None, "avg_tone": np.nan,
-            "raw_topic": topic, "country_tag": _flat(_pick(d, "country")),
+            "urgency_score": np.nan, "cameo_code": None, "avg_tone": np.nan,
+            "raw_topic": topic, "country_tag": d.get("country", "PK"),
         })
     return pd.DataFrame(rows) if rows else _empty()
 
@@ -96,7 +84,8 @@ def gdelt_frame(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
     ents = [_entities(t, p) for t, p in zip(texts, place)]
     return pd.DataFrame({
         "source": "gdelt", "source_record_id": g["GLOBALEVENTID"], "title": None, "url": g["SOURCEURL"],
-        "published_utc": pub, "fetched_utc": g["fetched_utc"],
+        "publisher": None,
+        "published_utc": pub, "crawled_utc": pd.NaT, "fetched_utc": g["fetched_utc"],
         "city": [e[0] for e in ents], "province": province,
         "lat": pd.to_numeric(g["ActionGeo_Lat"], errors="coerce"),
         "lon": pd.to_numeric(g["ActionGeo_Long"], errors="coerce"),
@@ -108,7 +97,7 @@ def gdelt_frame(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
 
 
 def build_silver(con: duckdb.DuckDBPyConnection, agent: DataQualityAgent) -> dict[str, int]:
-    cand = pd.concat([newsagent_frame(con), gdelt_frame(con)], ignore_index=True)
+    cand = pd.concat([freenewsapi_frame(con), gdelt_frame(con)], ignore_index=True)
     cand["is_imputed"] = False
     cand["imputed_fields"] = ""
     cand["dq_flags"] = ""
@@ -116,8 +105,9 @@ def build_silver(con: duckdb.DuckDBPyConnection, agent: DataQualityAgent) -> dic
     cand["article_id"] = None
     cand["publisher_domain"] = None
     cand["published_utc"] = pd.to_datetime(cand["published_utc"])
+    cand["crawled_utc"] = pd.to_datetime(cand["crawled_utc"])
     cand["fetched_utc"] = pd.to_datetime(cand["fetched_utc"])
-    agent.log("candidate_rows", "pass", len(cand), f"newsagent+gdelt rows entering the DQ gate")
+    agent.log("candidate_rows", "pass", len(cand), "freenewsapi+gdelt rows entering the DQ gate")
 
     clean, quarantined = agent.run(cand)
     clean["region_group"] = clean["city"].map(config.region_group)

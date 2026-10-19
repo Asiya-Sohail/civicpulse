@@ -8,12 +8,14 @@ from civicpulse.warehouse.silver import SILVER_COLS
 
 def cand(**over):
     base = {
-        "source": "newsagent", "source_record_id": "1", "title": "x", "url": "https://dawn.com/a",
-        "published_utc": pd.Timestamp("2026-03-01 06:00"), "fetched_utc": pd.Timestamp("2026-03-01 07:00"),
+        "source": "freenewsapi", "source_record_id": "1", "title": "x", "url": "https://dawn.com/a",
+        "published_utc": pd.Timestamp("2026-03-01 06:00"), "crawled_utc": pd.NaT,
+        "fetched_utc": pd.Timestamp("2026-03-01 07:00"),
         "city": "Karachi", "province": None, "lat": np.nan, "lon": np.nan, "issue_type": "Water",
         "service": None, "urgency_score": 5.0, "cameo_code": None, "avg_tone": np.nan,
         "raw_topic": None, "country_tag": "pk", "is_imputed": False, "imputed_fields": "",
-        "dq_flags": "", "verification_status": "unverified", "article_id": None, "publisher_domain": None,
+        "dq_flags": "", "verification_status": "unverified", "article_id": None, "publisher": "Dawn",
+        "publisher_domain": None,
     }
     base.update(over)
     return base
@@ -37,12 +39,12 @@ def test_fix_whitespace_city_alias_and_url():
     assert (log[log.check_name == "city_normalise"].action == "fix").all()
 
 
-def test_duplicates_removed_and_newsagent_preferred():
+def test_duplicates_removed_and_freenewsapi_preferred():
     clean, _, log = run([
         cand(source="gdelt", source_record_id="g1", url="http://dawn.com/a/", title=None),
         cand(url="https://www.dawn.com/a?utm_medium=z"),
     ])
-    assert len(clean) == 1 and clean.iloc[0].source == "newsagent"
+    assert len(clean) == 1 and clean.iloc[0].source == "freenewsapi"
     assert int(log[log.check_name == "duplicate_links"].rows_affected.iloc[0]) == 1
 
 

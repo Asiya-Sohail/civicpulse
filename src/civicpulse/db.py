@@ -30,7 +30,18 @@ def ensure_meta(con: duckdb.DuckDBPyConnection) -> None:
         """
         CREATE TABLE IF NOT EXISTS pipeline_runs (
             run_id VARCHAR, started_utc TIMESTAMP, finished_utc TIMESTAMP, status VARCHAR,
-            bronze_newsagent BIGINT, bronze_gdelt BIGINT, silver_rows BIGINT,
+            bronze_freenewsapi BIGINT, bronze_gdelt BIGINT, silver_rows BIGINT,
             quarantined_rows BIGINT, gold_events BIGINT, gold_hourly BIGINT, error VARCHAR
         )"""
     )
+    old_column = con.execute(
+        """SELECT count(*) FROM information_schema.columns
+           WHERE table_name='pipeline_runs' AND column_name='bronze_newsagent'"""
+    ).fetchone()[0]
+    new_column = con.execute(
+        """SELECT count(*) FROM information_schema.columns
+           WHERE table_name='pipeline_runs' AND column_name='bronze_freenewsapi'"""
+    ).fetchone()[0]
+    # Existing local warehouses keep their run history under the old source-column name.
+    if old_column and not new_column:
+        con.execute("ALTER TABLE pipeline_runs RENAME COLUMN bronze_newsagent TO bronze_freenewsapi")

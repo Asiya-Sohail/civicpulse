@@ -4,7 +4,7 @@ Turns Pakistani news reports into geo-tagged, *unverified-until-confirmed* publi
 (electricity, water, mobility, municipal). See `SETUP.md` to run it and `DATA_SOURCES.md` for the declaration.
 
 ```
-NewsAgent API ─┐                                          ┌─ silver.quarantine (failed hard checks)
+FreeNewsAPI ───┐                                          ┌─ silver.quarantine (failed hard checks)
                ├─► data/bronze (immutable files + manifest.csv) ─► DuckDB bronze ─► silver ─► gold
 GDELT zips ────┘                                          │      │ DQ Agent: fix/fill/flag/quarantine ─► quality_log
                                                           └──────┴─ gold.issue_events, gold.hourly_issue_counts, gold.data_freshness
@@ -22,6 +22,7 @@ GDELT zips ────┘                                          │      │
 - **Bronze**: files exactly as received (read-only). DuckDB bronze tables are rebuilt from them.
 - **Silver**: one schema for both sources; UTC timestamps (PKT only in `*_pkt_display` columns); duplicate links removed; city / issue type / service extracted by rules in `config.py`.
 - **Gold**: `issue_events` (one row per reported issue) and `hourly_issue_counts` (hour x city x issue, for the model). `row_id` is a hash of the URL / grain, so it is identical on every rebuild.
+- **Live source**: FreeNewsAPI keyless search, filtered to Pakistan and polled hourly with an overlapping crawl-time window. Source article IDs, titles, timestamps, publisher names, and URLs are retained; repeated URLs are deduplicated downstream.
 
 ## DQ agent (`src/civicpulse/quality/agent.py`)
 Fix (trim, `KHI` -> Karachi, canonical URLs, dedupe) -> Fill (`is_imputed=True` + `imputed_fields`) -> Quarantine

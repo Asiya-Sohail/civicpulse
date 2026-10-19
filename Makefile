@@ -1,6 +1,6 @@
 PYTHON ?= python
 
-.PHONY: setup test probe newsagent gdelt data build stats
+.PHONY: setup test probe freenewsapi gdelt data build stats
 
 setup:
 	$(PYTHON) -m pip install -e ".[dev]"
@@ -9,10 +9,10 @@ test:
 	$(PYTHON) -m pytest -q
 
 probe:
-	$(PYTHON) -m civicpulse probe-newsagent
+	$(PYTHON) -m civicpulse probe-freenewsapi
 
-newsagent:
-	$(PYTHON) -m civicpulse fetch-newsagent
+freenewsapi:
+	$(PYTHON) -m civicpulse fetch-freenewsapi
 
 gdelt:
 	$(PYTHON) -m civicpulse history

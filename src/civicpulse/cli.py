@@ -4,19 +4,16 @@ import argparse
 from datetime import date
 
 from civicpulse import config, db, pipeline
-from civicpulse.ingest import gdelt, newsagent
+from civicpulse.ingest import freenewsapi, gdelt
 
 
-def _fetch_newsagent() -> bool:
+def _fetch_freenewsapi() -> bool:
     try:
-        path = newsagent.fetch_feed()
-        print(f"NewsAgent: saved {path.name}")
+        paths = freenewsapi.fetch_feed()
+        print(f"FreeNewsAPI: saved {len(paths)} raw page(s)")
         return True
-    except newsagent.NewsAgentConfigError as e:
-        print(f"NewsAgent skipped: {e}")
-        return False
     except Exception as e:
-        print(f"NewsAgent fetch failed: {type(e).__name__}: {e}")
+        print(f"FreeNewsAPI fetch failed: {type(e).__name__}: {e}")
         return False
 
 
@@ -43,10 +40,10 @@ def _print_build(stats: dict) -> None:
 def _stats() -> None:
     con = db.connect()
     q = lambda sql: con.execute(sql).fetchone()[0]  # noqa: E731
-    bn, bg = q("SELECT count(*) FROM bronze.newsagent_raw"), q("SELECT count(*) FROM bronze.gdelt_events_raw")
-    rows = bn + bg
+    bf, bg = q("SELECT count(*) FROM bronze.freenewsapi_raw"), q("SELECT count(*) FROM bronze.gdelt_events_raw")
+    rows = bf + bg
     docs = q("SELECT count(DISTINCT url) FROM silver.articles")
-    print(f"bronze rows: newsagent={bn:,} gdelt={bg:,}")
+    print(f"bronze rows: freenewsapi={bf:,} gdelt={bg:,}")
     print(f"silver articles={q('SELECT count(*) FROM silver.articles'):,} "
           f"quarantined={q('SELECT count(*) FROM silver.quarantine'):,}")
     print(f"gold issue_events={q('SELECT count(*) FROM gold.issue_events'):,} "
@@ -66,8 +63,8 @@ def main() -> None:
     sub.add_parser("data", help="incremental fetch of both sources, then rebuild bronze/silver/gold + DQ gate")
     sub.add_parser("history", help="download sampled historical GDELT data (one-time/backfill)")
     sub.add_parser("build", help="rebuild the warehouse from files already on disk")
-    sub.add_parser("fetch-newsagent")
-    sub.add_parser("probe-newsagent")
+    sub.add_parser("fetch-freenewsapi", help="fetch recent Pakistan articles from FreeNewsAPI")
+    sub.add_parser("probe-freenewsapi", help="check FreeNewsAPI connectivity and response shape")
     g = sub.add_parser("fetch-gdelt")
     g.add_argument("--start"), g.add_argument("--end")
     g.add_argument("--per-day", type=int), g.add_argument("--max-files", type=int)
@@ -76,20 +73,19 @@ def main() -> None:
 
     if a.cmd == "data":
         # Hourly job: do not rescan/download the entire historical GDELT window every run.
-        news_ok = _fetch_newsagent()
+        news_ok = _fetch_freenewsapi()
         print("GDELT recent slots:", gdelt.fetch_recent(hours=4))
         _print_build(pipeline.run_build())
         if not news_ok:
-            print("WARNING: NewsAgent fetch failed/skipped; warehouse was rebuilt from existing raw files. "
-                  "Check the log and .env/API quota.")
+            print("WARNING: FreeNewsAPI fetch failed; warehouse was rebuilt from existing raw files.")
     elif a.cmd == "history":
         _fetch_gdelt()
     elif a.cmd == "build":
         _print_build(pipeline.run_build())
-    elif a.cmd == "fetch-newsagent":
-        raise SystemExit(0 if _fetch_newsagent() else 1)
-    elif a.cmd == "probe-newsagent":
-        newsagent.probe()
+    elif a.cmd == "fetch-freenewsapi":
+        raise SystemExit(0 if _fetch_freenewsapi() else 1)
+    elif a.cmd == "probe-freenewsapi":
+        freenewsapi.probe()
     elif a.cmd == "fetch-gdelt":
         _fetch_gdelt(a)
     elif a.cmd == "stats":

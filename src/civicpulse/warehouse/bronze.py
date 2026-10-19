@@ -10,7 +10,7 @@ import pandas as pd
 
 from civicpulse import config
 from civicpulse.ingest import gdelt, manifest
-from civicpulse.ingest.newsagent import extract_items
+from civicpulse.ingest.freenewsapi import extract_items
 
 
 def _fetched(meta: dict | None, path: Path) -> pd.Timestamp:
@@ -27,15 +27,15 @@ def build_bronze(
 ) -> dict[str, int]:
     lookup = manifest.manifest_lookup(manifest_path)
 
-    # ---- NewsAgent -------------------------------------------------------------------
-    con.execute("DROP TABLE IF EXISTS bronze.newsagent_raw")
+    # ---- FreeNewsAPI -----------------------------------------------------------------
+    con.execute("DROP TABLE IF EXISTS bronze.freenewsapi_raw")
     con.execute(
-        """CREATE TABLE bronze.newsagent_raw (
+        """CREATE TABLE bronze.freenewsapi_raw (
                raw_id VARCHAR, file_name VARCHAR, file_sha256 VARCHAR,
                fetched_utc TIMESTAMP, query VARCHAR, raw_json VARCHAR)"""
     )
     rows = []
-    for path in sorted((bronze_dir / "newsagent").glob("*.json")):
+    for path in sorted((bronze_dir / "freenewsapi").glob("*.json")):
         meta = lookup.get(path.name)
         sha = (meta or {}).get("sha256") or manifest.sha256_file(path)
         items = extract_items(json.loads(path.read_text(encoding="utf-8")))
@@ -49,7 +49,7 @@ def build_bronze(
             })
     if rows:
         df = pd.DataFrame(rows)
-        con.execute("INSERT INTO bronze.newsagent_raw SELECT * FROM df")
+        con.execute("INSERT INTO bronze.freenewsapi_raw SELECT * FROM df")
 
     # ---- GDELT -----------------------------------------------------------------------
     con.execute("DROP TABLE IF EXISTS bronze.gdelt_events_raw")
@@ -81,6 +81,6 @@ def build_bronze(
     flush()
 
     return {
-        "newsagent": con.execute("SELECT count(*) FROM bronze.newsagent_raw").fetchone()[0],
+        "freenewsapi": con.execute("SELECT count(*) FROM bronze.freenewsapi_raw").fetchone()[0],
         "gdelt": con.execute("SELECT count(*) FROM bronze.gdelt_events_raw").fetchone()[0],
     }

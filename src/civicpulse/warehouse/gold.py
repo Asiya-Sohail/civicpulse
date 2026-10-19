@@ -11,8 +11,8 @@ def build_gold(con: duckdb.DuckDBPyConnection) -> dict[str, int]:
     con.execute(
         f"""
         CREATE OR REPLACE TABLE gold.issue_events AS
-        SELECT 'r_' || article_id AS row_id, source, publisher_domain, title, url,
-               published_utc, published_utc + {PKT} AS published_pkt_display,
+        SELECT 'r_' || article_id AS row_id, source, source_record_id, publisher, publisher_domain, title, url,
+               published_utc, crawled_utc, published_utc + {PKT} AS published_pkt_display,
                city, province, region_group, lat, lon, issue_type, service,
                urgency_score, is_imputed, imputed_fields, verification_status, dq_flags
         FROM silver.articles

@@ -1,6 +1,8 @@
 name: CivicPulse Hourly Pipeline
 
 on:
+  schedule:
+    - cron: '17 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -28,7 +30,28 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .
 
+      - name: Restore cached warehouse state
+        uses: actions/cache@v4
+        with:
+          path: |
+            data/bronze
+            data/cache
+            data/warehouse
+            logs
+          key: civicpulse-data-${{ github.run_id }}
+          restore-keys: |
+            civicpulse-data-
+
       - name: Run CivicPulse pipeline
-        env:
-          NEWSAGENT_API_KEY: ${{ secrets.NEWSAGENT_API_KEY }}
         run: make data
+
+      - name: Save warehouse state for next run
+        uses: actions/cache@v4
+        if: always()
+        with:
+          path: |
+            data/bronze
+            data/cache
+            data/warehouse
+            logs
+          key: civicpulse-data-${{ github.run_id }}

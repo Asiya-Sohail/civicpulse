@@ -40,7 +40,7 @@ def run_build(
         g = gold.build_gold(con)
         agent.gate_gold()
         gold.build_freshness(con, agent.freshness, run_id)
-        stats |= {"bronze_newsagent": b["newsagent"], "bronze_gdelt": b["gdelt"], **s, **g}
+        stats |= {"bronze_freenewsapi": b["freenewsapi"], "bronze_gdelt": b["gdelt"], **s, **g}
     except Exception as exc:  # the failure itself must be in the audit trail
         status, error = "FAILED", f"{type(exc).__name__}: {exc}"
         # Roll back Gold only; keep the previous trusted version if the new build fails.
@@ -58,7 +58,7 @@ def run_build(
         con.execute(
             "INSERT INTO pipeline_runs VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             [run_id, started, datetime.now(timezone.utc).replace(tzinfo=None), status,
-             stats.get("bronze_newsagent"), stats.get("bronze_gdelt"), stats.get("silver"),
+             stats.get("bronze_freenewsapi"), stats.get("bronze_gdelt"), stats.get("silver"),
              stats.get("quarantined"), stats.get("gold_events"), stats.get("gold_hourly"), error],
         )
         con.close()

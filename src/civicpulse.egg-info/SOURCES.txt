@@ -14,7 +14,7 @@ src/civicpulse.egg-info/top_level.txt
 src/civicpulse/ingest/__init__.py
 src/civicpulse/ingest/gdelt.py
 src/civicpulse/ingest/manifest.py
-src/civicpulse/ingest/newsagent.py
+src/civicpulse/ingest/freenewsapi.py
 src/civicpulse/quality/__init__.py
 src/civicpulse/quality/agent.py
 src/civicpulse/warehouse/__init__.py
@@ -22,5 +22,5 @@ src/civicpulse/warehouse/bronze.py
 src/civicpulse/warehouse/gold.py
 src/civicpulse/warehouse/silver.py
 tests/test_dq_agent.py
-tests/test_newsagent_fields.py
+tests/test_freenewsapi_fields.py
 tests/test_pipeline.py
