@@ -41,6 +41,7 @@ make test        # run the test suite
 make probe       # FreeNewsAPI connectivity and response shape
 make freenewsapi # one live Pakistan fetch
 make gdelt       # one-time historical GDELT backfill (sampled; first run is slow)
+make backfill    # fetch historical GDELT and build all available raw data through Gold
 make data        # incremental recent fetch + rebuild bronze/silver/gold + DQ gate
 make stats       # row counts, volume rule check, DQ summary, freshness
 ```
@@ -91,6 +92,13 @@ The repository includes two workflows:
 
 - `.github/workflows/hourly-data.yml`: runs at minute 17 of every UTC hour, and can also be started with **Actions → CivicPulse hourly data → Run workflow**.
 - `.github/workflows/hourly-watchdog.yml`: checks every 15 minutes and dispatches a recovery run if the hourly workflow is overdue or has failed.
+
+On the first runner without the `.gdelt-history-complete` marker, the hourly workflow runs the
+sampled historical backfill and builds it through Bronze, Silver, and Gold before its normal
+incremental update. That first run takes longer. It marks the backfill complete only after
+downloads and the warehouse build succeed; subsequent runs restore that marker and only fetch
+recent GDELT slots. Raw archives, the manifest, parquet parse cache, DuckDB warehouse, and logs
+are restored and saved via separate cache restore/save actions.
 
 ### One-time GitHub setup
 

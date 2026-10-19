@@ -1,6 +1,6 @@
 PYTHON ?= python
 
-.PHONY: setup test probe freenewsapi gdelt data build stats
+.PHONY: setup test probe freenewsapi gdelt backfill data build stats
 
 setup:
 	$(PYTHON) -m pip install -e ".[dev]"
@@ -16,6 +16,9 @@ freenewsapi:
 
 gdelt:
 	$(PYTHON) -m civicpulse history
+
+backfill:
+	$(PYTHON) -m civicpulse backfill
 
 data:
 	$(PYTHON) -m civicpulse data

@@ -17,7 +17,7 @@ def _fetch_freenewsapi() -> bool:
         return False
 
 
-def _fetch_gdelt(args=None) -> None:
+def _fetch_gdelt(args=None) -> dict[str, int]:
     start, end = gdelt.default_window()
     per_day = config.GDELT_PER_DAY
     max_files = None
@@ -28,7 +28,18 @@ def _fetch_gdelt(args=None) -> None:
         max_files = args.max_files
     n = len(gdelt.slot_stamps(start, end, per_day))
     print(f"GDELT: {start} -> {end}, {per_day}/day = {n} files (resumable; existing files are skipped)")
-    print("GDELT:", gdelt.fetch_range(start, end, per_day, max_files=max_files))
+    counts = gdelt.fetch_range(start, end, per_day, max_files=max_files)
+    print("GDELT:", counts)
+    return counts
+
+
+def _backfill_gdelt() -> None:
+    """Fetch the configured historical GDELT sample and build all available raw data to Gold."""
+    counts = _fetch_gdelt()
+    if counts["failed"]:
+        raise RuntimeError(f"GDELT historical backfill has {counts['failed']} failed downloads")
+    print("Building Bronze, Silver, and Gold from all downloaded historical and live raw files.")
+    _print_build(pipeline.run_build())
 
 
 def _print_build(stats: dict) -> None:
@@ -62,6 +73,7 @@ def main() -> None:
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("data", help="incremental fetch of both sources, then rebuild bronze/silver/gold + DQ gate")
     sub.add_parser("history", help="download sampled historical GDELT data (one-time/backfill)")
+    sub.add_parser("backfill", help="download historical GDELT sample and build all raw data to Gold")
     sub.add_parser("build", help="rebuild the warehouse from files already on disk")
     sub.add_parser("fetch-freenewsapi", help="fetch recent Pakistan articles from FreeNewsAPI")
     sub.add_parser("probe-freenewsapi", help="check FreeNewsAPI connectivity and response shape")
@@ -80,6 +92,8 @@ def main() -> None:
             print("WARNING: FreeNewsAPI fetch failed; warehouse was rebuilt from existing raw files.")
     elif a.cmd == "history":
         _fetch_gdelt()
+    elif a.cmd == "backfill":
+        _backfill_gdelt()
     elif a.cmd == "build":
         _print_build(pipeline.run_build())
     elif a.cmd == "fetch-freenewsapi":

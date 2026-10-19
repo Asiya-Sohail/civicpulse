@@ -31,27 +31,37 @@ jobs:
           pip install -e .
 
       - name: Restore cached warehouse state
-        uses: actions/cache@v4
+        id: warehouse-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             data/bronze
             data/cache
             data/warehouse
+            data/manifest.csv
             logs
-          key: civicpulse-data-${{ github.run_id }}
+          key: civicpulse-data-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
+            civicpulse-data-${{ github.ref_name }}-
             civicpulse-data-
+
+      - name: Backfill historical GDELT and build it to Gold
+        if: ${{ !hashFiles('data/warehouse/.gdelt-history-complete') }}
+        run: |
+          python -m civicpulse backfill
+          touch data/warehouse/.gdelt-history-complete
 
       - name: Run CivicPulse pipeline
         run: make data
 
       - name: Save warehouse state for next run
-        uses: actions/cache@v4
+        uses: actions/cache/save@v4
         if: always()
         with:
           path: |
             data/bronze
             data/cache
             data/warehouse
+            data/manifest.csv
             logs
-          key: civicpulse-data-${{ github.run_id }}
+          key: civicpulse-data-${{ github.ref_name }}-${{ github.run_id }}
