@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import uuid
+from civicpulse.warehouse import bronze, gold, silver, weather
 from datetime import datetime, timezone
 from pathlib import Path
 
 from civicpulse import config, db
 from civicpulse.quality.agent import DataQualityAgent
-from civicpulse.warehouse import bronze, gold, silver
+
 
 
 def run_build(
@@ -24,7 +25,13 @@ def run_build(
     stats = {"run_id": run_id}
     status, error = "SUCCESS", None
     # Preserve the last successful Gold outputs until the new Gold tables pass their gate.
-    gold_tables = ("issue_events", "hourly_issue_counts", "data_freshness")
+    gold_tables = (
+        "issue_events",
+        "hourly_issue_counts",
+        "hourly_issue_counts_with_weather",
+        "weather_hourly_features",
+        "data_freshness",
+    )
     existing_gold = {
         name: con.execute(
             "SELECT count(*) FROM information_schema.tables WHERE table_schema='gold' AND table_name=?",
@@ -50,10 +57,18 @@ def run_build(
             )
         s = silver.build_silver(con, agent)
         g = gold.build_gold(con)
+
+        w = weather.build_weather_table(
+            con=con,
+            bronze_dir=bronze_dir,
+            manifest_path=manifest_path,
+        )
+
+        weather.join_weather_features_to_gold(con)
         agent.gate_gold()
         gold.build_freshness(con, agent.freshness, run_id)
         agent.persist_distribution_baseline()
-        stats |= {**s, **g}
+        stats |= {**s, **g, "weather_rows": w["rows"]}
     except Exception as exc:  # the failure itself must be in the audit trail
         status, error = "FAILED", f"{type(exc).__name__}: {exc}"
         # Roll back Gold only; keep the previous trusted version if the new build fails.
