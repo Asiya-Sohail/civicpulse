@@ -15,6 +15,9 @@ def _fetch_newsagent() -> bool:
     except newsagent.NewsAgentConfigError as e:
         print(f"NewsAgent skipped: {e}")
         return False
+    except Exception as e:
+        print(f"NewsAgent fetch failed: {type(e).__name__}: {e}")
+        return False
 
 
 def _fetch_gdelt(args=None) -> None:
@@ -60,7 +63,8 @@ def _stats() -> None:
 def main() -> None:
     p = argparse.ArgumentParser(prog="civicpulse")
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("data", help="fetch both sources, then rebuild bronze/silver/gold + DQ gate")
+    sub.add_parser("data", help="incremental fetch of both sources, then rebuild bronze/silver/gold + DQ gate")
+    sub.add_parser("history", help="download sampled historical GDELT data (one-time/backfill)")
     sub.add_parser("build", help="rebuild the warehouse from files already on disk")
     sub.add_parser("fetch-newsagent")
     sub.add_parser("probe-newsagent")
@@ -71,9 +75,15 @@ def main() -> None:
     a = p.parse_args()
 
     if a.cmd == "data":
-        _fetch_newsagent()
-        _fetch_gdelt()
+        # Hourly job: do not rescan/download the entire historical GDELT window every run.
+        news_ok = _fetch_newsagent()
+        print("GDELT recent slots:", gdelt.fetch_recent(hours=4))
         _print_build(pipeline.run_build())
+        if not news_ok:
+            print("WARNING: NewsAgent fetch failed/skipped; warehouse was rebuilt from existing raw files. "
+                  "Check the log and .env/API quota.")
+    elif a.cmd == "history":
+        _fetch_gdelt()
     elif a.cmd == "build":
         _print_build(pipeline.run_build())
     elif a.cmd == "fetch-newsagent":

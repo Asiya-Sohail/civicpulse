@@ -19,25 +19,27 @@ DB_PATH = DATA_DIR / "warehouse" / "civicpulse.duckdb"
 
 # ---- Source 1: NewsAgent Data API (live) -------------------------------------------------
 NEWSAGENT_API_KEY = os.getenv("NEWSAGENT_API_KEY", "")
-NEWSAGENT_BASE_URL = os.getenv("NEWSAGENT_BASE_URL", "").rstrip("/")
+NEWSAGENT_BASE_URL = os.getenv("NEWSAGENT_BASE_URL", "https://api.newsagentdata.com").strip().rstrip("/").removesuffix("/v1")
 NEWSAGENT_ENDPOINT = os.getenv("NEWSAGENT_ENDPOINT", "/v1/feed")
 NEWSAGENT_AUTH_HEADER = os.getenv("NEWSAGENT_AUTH_HEADER", "X-API-Key")
 NEWSAGENT_AUTH_SCHEME = os.getenv("NEWSAGENT_AUTH_SCHEME", "")
 NEWSAGENT_COUNTRY = os.getenv("NEWSAGENT_COUNTRY", "pk")
-NEWSAGENT_LIMIT = os.getenv("NEWSAGENT_LIMIT", "")
+NEWSAGENT_PAGE_SIZE = os.getenv("NEWSAGENT_PAGE_SIZE", "100")  # API max is 200
 NEWSAGENT_LICENSE = (
     "NewsAgent Data free tier (100 req/day). Provider terms apply - confirm redistribution "
     "rights at newsagentdata.com before publishing raw data."
 )
-# The response schema is not verified, so every field accepts several candidate key names.
+# Verified against https://api.newsagentdata.com/openapi.json: articles[] has id, title, source, link,
+# fetched_at, urgency_score, country_tags, topic_tags, event_type. Extra names are kept as fallbacks.
 NEWSAGENT_FIELDS = {
     "title": ["title", "headline"],
-    "url": ["url", "link", "source_url"],
-    "published": ["published_at", "published", "timestamp", "pub_date", "date", "created_at"],
+    "url": ["link", "url", "source_url"],
+    # NewsAgent only exposes fetched_at (when *they* fetched it), used as the publish time
+    "published": ["published_at", "published", "timestamp", "pub_date", "date", "created_at", "fetched_at"],
     "urgency": ["urgency", "urgency_score", "urgency_level"],
-    "topic": ["topic", "topics", "category"],
+    "topic": ["topic", "topics", "topic_tags", "category", "event_type"],
     "publisher": ["source", "publisher", "source_name", "outlet"],
-    "country": ["country", "countries", "country_tag"],
+    "country": ["country", "countries", "country_tags", "country_tag"],
     "id": ["id", "article_id", "uuid"],
 }
 

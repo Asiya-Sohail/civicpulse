@@ -21,13 +21,11 @@ class NewsAgentConfigError(RuntimeError):
 
 def _request() -> tuple[bytes, str, str]:
     """Return (body, url_without_secrets, query_string)."""
-    if not config.NEWSAGENT_API_KEY or not config.NEWSAGENT_BASE_URL:
-        raise NewsAgentConfigError(
-            "Set NEWSAGENT_API_KEY and NEWSAGENT_BASE_URL in .env (copy from .env.example)."
-        )
+    if not config.NEWSAGENT_API_KEY:
+        raise NewsAgentConfigError("Set NEWSAGENT_API_KEY in .env (copy from .env.example).")
     params = {"country": config.NEWSAGENT_COUNTRY}
-    if config.NEWSAGENT_LIMIT:
-        params["limit"] = config.NEWSAGENT_LIMIT
+    if config.NEWSAGENT_PAGE_SIZE:
+        params["page_size"] = config.NEWSAGENT_PAGE_SIZE
     value = config.NEWSAGENT_API_KEY
     if config.NEWSAGENT_AUTH_SCHEME:
         value = f"{config.NEWSAGENT_AUTH_SCHEME} {value}"
@@ -35,7 +33,7 @@ def _request() -> tuple[bytes, str, str]:
     resp = requests.get(url, params=params, headers={config.NEWSAGENT_AUTH_HEADER: value}, timeout=30)
     if resp.status_code != 200:
         # never echo headers; body may help diagnose (quota, bad key) and contains no secrets
-        raise RuntimeError(f"NewsAgent HTTP {resp.status_code}: {resp.text[:200]}")
+        raise RuntimeError(f"NewsAgent HTTP {resp.status_code} for GET {url}: {resp.text[:200]}")
     query = "&".join(f"{k}={v}" for k, v in params.items())
     return resp.content, url, query
 

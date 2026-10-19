@@ -1,23 +1,27 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "civicpulse"
 version = "0.1.0"
-description = "Pakistan CivicPulse - live public issue intelligence (warehouse + data quality agent)"
+description = "CivicPulse Pakistan civic-issue news warehouse and data-quality pipeline"
 requires-python = ">=3.10"
 dependencies = [
-  "duckdb>=1.0",
-  "pandas>=2.1",
-  "pyarrow>=14",
-  "pandera>=0.20",
+  "duckdb>=1.1",
+  "pandas>=2.0",
+  "numpy>=1.24",
   "requests>=2.31",
   "python-dotenv>=1.0",
+  "pyarrow>=14.0",
+  "pandera[pandas]>=0.20",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]

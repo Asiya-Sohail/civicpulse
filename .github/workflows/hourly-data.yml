@@ -1,0 +1,83 @@
+name: CivicPulse hourly data
+
+on:
+  schedule:
+    # Run at minute 17 of every hour (UTC); avoids the busy top-of-hour window.
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: civicpulse-hourly-data
+  cancel-in-progress: false
+
+jobs:
+  ingest-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NEWSAGENT_API_KEY: ${{ secrets.NEWSAGENT_API_KEY }}
+      NEWSAGENT_BASE_URL: https://api.newsagentdata.com
+      NEWSAGENT_ENDPOINT: /v1/feed
+      NEWSAGENT_AUTH_HEADER: X-API-Key
+      NEWSAGENT_COUNTRY: pk
+      NEWSAGENT_PAGE_SIZE: '100'
+      STALE_AFTER_HOURS: '3'
+      GDELT_DAYS_BACK: '740'
+      GDELT_PER_DAY: '2'
+      PYTHONUNBUFFERED: '1'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      # GitHub-hosted runners are disposable. Restore the local raw files, manifest,
+      # parquet cache, and DuckDB file so hourly runs can incrementally build on prior data.
+      - name: Restore warehouse state
+        uses: actions/cache/restore@v4
+        with:
+          path: data/
+          key: civicpulse-data-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            civicpulse-data-
+
+      - name: Install CivicPulse
+        run: python -m pip install -e '.[dev]'
+
+      - name: Run tests
+        run: python -m pytest -q
+
+      - name: Fetch hourly data and build warehouse
+        run: python -m civicpulse data
+
+      - name: Print warehouse health
+        if: success()
+        run: python -m civicpulse stats
+
+      # Each run has a unique cache key. Restore-prefix selects the most recently
+      # created matching cache, so the next run can resume. Cache is best-effort,
+      # not a database backup; use durable external storage for strict guarantees.
+      - name: Save warehouse state for the next run
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/
+          key: civicpulse-data-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Upload run logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: civicpulse-hourly-logs-${{ github.run_id }}
+          path: logs/
+          if-no-files-found: ignore
+          retention-days: 14

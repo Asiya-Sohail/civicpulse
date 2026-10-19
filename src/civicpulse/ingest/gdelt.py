@@ -111,6 +111,43 @@ def fetch_range(
     return counts
 
 
+
+def fetch_recent(
+    hours: int = 4,
+    bronze_dir: Path = config.BRONZE_DIR,
+    manifest_path: Path = config.MANIFEST_PATH,
+    workers: int = 4,
+) -> dict[str, int]:
+    """Fetch recent completed 15-minute GDELT slots for hourly incremental runs."""
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    current_slot = now.replace(minute=(now.minute // 15) * 15)
+    end = current_slot - timedelta(minutes=15)  # avoid an in-progress/current slot
+    count = max(1, int(hours * 4))
+    stamps = [(end - timedelta(minutes=15 * i)).strftime("%Y%m%d%H%M%S")
+              for i in reversed(range(count))]
+    out_dir = bronze_dir / "gdelt"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    known = {r["file_path"] for r in manifest.read_manifest(manifest_path)}
+    counts = {"downloaded": 0, "cached": 0, "missing": 0, "failed": 0}
+    pending = []
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(_download, stamp, out_dir) for stamp in stamps]
+        for fut in as_completed(futures):
+            stamp, path, status = fut.result()
+            counts[status] += 1
+            if path is not None and manifest.rel_path(path) not in known:
+                pending.append({
+                    "file_path": manifest.rel_path(path), "source": "gdelt",
+                    "source_url": config.GDELT_BASE_URL + path.name,
+                    "search_query": "recent GDELT 15-minute export; PK filter applied at load",
+                    "fetch_timestamp_utc": manifest.utc_now_iso(),
+                    "sha256": manifest.sha256_file(path), "bytes": path.stat().st_size,
+                    "license_terms": config.GDELT_LICENSE,
+                })
+    manifest.append_manifest(pending, manifest_path)
+    return counts
+
+
 def parse_zip(zip_path: Path) -> pd.DataFrame:
     """Read one GDELT export zip and keep only Pakistan action-location rows (all columns, as text)."""
     with zipfile.ZipFile(zip_path) as zf:

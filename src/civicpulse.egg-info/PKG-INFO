@@ -1,0 +1,14 @@
+Metadata-Version: 2.4
+Name: civicpulse
+Version: 0.1.0
+Summary: CivicPulse Pakistan civic-issue news warehouse and data-quality pipeline
+Requires-Python: >=3.10
+Requires-Dist: duckdb>=1.1
+Requires-Dist: pandas>=2.0
+Requires-Dist: numpy>=1.24
+Requires-Dist: requests>=2.31
+Requires-Dist: python-dotenv>=1.0
+Requires-Dist: pyarrow>=14.0
+Requires-Dist: pandera[pandas]>=0.20
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"

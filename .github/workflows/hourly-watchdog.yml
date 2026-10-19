@@ -1,0 +1,63 @@
+name: CivicPulse schedule watchdog
+
+on:
+  schedule:
+    # Check every 15 minutes for a missing/stuck hourly run.
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: civicpulse-schedule-watchdog
+  cancel-in-progress: true
+
+jobs:
+  check-hourly-run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check recent hourly workflow and dispatch a recovery run if needed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          now=$(date -u +%s)
+          runs=$(gh api "repos/${REPO}/actions/workflows/hourly-data.yml/runs?per_page=20")
+          latest=$(echo "$runs" | jq -c '.workflow_runs | sort_by(.created_at) | last // empty')
+
+          if [[ -z "$latest" ]]; then
+            echo "No hourly run exists yet; dispatching a recovery run."
+            gh workflow run hourly-data.yml --repo "$REPO"
+            exit 0
+          fi
+
+          status=$(echo "$latest" | jq -r '.status')
+          conclusion=$(echo "$latest" | jq -r '.conclusion // ""')
+          created=$(echo "$latest" | jq -r '.created_at')
+          created_epoch=$(date -u -d "$created" +%s)
+          age_minutes=$(( (now - created_epoch) / 60 ))
+          echo "Latest hourly run: status=$status conclusion=$conclusion age=${age_minutes}m"
+
+          # Do not dispatch while a scheduled or manual run is already queued/running.
+          if [[ "$status" == "in_progress" || "$status" == "queued" || "$status" == "waiting" || "$status" == "requested" ]]; then
+            echo "Hourly workflow is already pending/running; no action needed."
+            exit 0
+          fi
+
+          # Healthy run should be created within the last 75 minutes. After a failed
+          # run, wait 20 minutes before dispatching a recovery attempt.
+          if [[ "$conclusion" == "success" && "$age_minutes" -lt 75 ]]; then
+            echo "Recent successful hourly run found."
+            exit 0
+          fi
+          if [[ "$conclusion" != "success" && "$age_minutes" -lt 20 ]]; then
+            echo "Latest run failed recently; allowing time before retry."
+            exit 0
+          fi
+
+          echo "Hourly run is overdue or failed; dispatching a recovery run."
+          gh workflow run hourly-data.yml --repo "$REPO"
