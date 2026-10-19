@@ -1,0 +1,11 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    { "name": "CivicPulse: build warehouse", "type": "debugpy", "request": "launch",
+      "module": "civicpulse", "args": ["build"], "console": "integratedTerminal" },
+    { "name": "CivicPulse: probe NewsAgent", "type": "debugpy", "request": "launch",
+      "module": "civicpulse", "args": ["probe-newsagent"], "console": "integratedTerminal" },
+    { "name": "CivicPulse: stats", "type": "debugpy", "request": "launch",
+      "module": "civicpulse", "args": ["stats"], "console": "integratedTerminal" }
+  ]
+}
