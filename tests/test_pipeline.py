@@ -105,7 +105,28 @@ def test_end_to_end_rebuild_is_deterministic(tmp_path):
     )  # old pull time -> feed must be flagged STALE
     first = run_build(dbp, bronze, cache, mani)
     assert first["bronze_gdelt"] == 3 and first["bronze_freenewsapi"] == 2
+    assert first["weather_rows"] == 0
     con = db.connect(dbp)
+    assert con.execute(
+        """
+        SELECT count(*)
+        FROM information_schema.tables
+        WHERE table_schema = 'gold'
+          AND table_name = 'weather_hourly_features'
+        """
+    ).fetchone()[0] == 1
+
+    assert con.execute(
+        """
+        SELECT count(*)
+        FROM gold.hourly_issue_counts_with_weather
+        """
+    ).fetchone()[0] == con.execute(
+        """
+        SELECT count(*)
+        FROM gold.hourly_issue_counts
+        """
+    ).fetchone()[0]
     ev = con.execute("SELECT row_id, source, city, issue_type FROM gold.issue_events ORDER BY row_id").df()
     assert len(ev) == 3 and ev.row_id.is_unique          # duplicate Dawn link collapsed, civic rows only
     assert "Karachi" in set(ev.city) and "Lahore" in set(ev.city)
