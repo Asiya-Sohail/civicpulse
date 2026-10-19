@@ -4,7 +4,7 @@ import argparse
 from datetime import date
 
 from civicpulse import config, db, pipeline
-from civicpulse.ingest import freenewsapi, gdelt
+from civicpulse.ingest import freenewsapi, gdelt, open_meteo
 
 
 def _fetch_freenewsapi() -> bool:
@@ -95,6 +95,14 @@ def main() -> None:
     g = sub.add_parser("fetch-gdelt")
     g.add_argument("--start"), g.add_argument("--end")
     g.add_argument("--per-day", type=int), g.add_argument("--max-files", type=int)
+
+    w = sub.add_parser("fetch-weather")
+    w.add_argument("--city", required=True)
+    w.add_argument("--latitude", required=True, type=float)
+    w.add_argument("--longitude", required=True, type=float)
+    w.add_argument("--start", required=True)
+    w.add_argument("--end", required=True)
+
     sub.add_parser("stats")
     a = p.parse_args()
 
@@ -120,6 +128,17 @@ def main() -> None:
         freenewsapi.probe()
     elif a.cmd == "fetch-gdelt":
         _fetch_gdelt(a)
+    elif a.cmd == "fetch-weather":
+        path = open_meteo.fetch_historical_weather(
+            start_date=date.fromisoformat(a.start),
+            end_date=date.fromisoformat(a.end),
+            city=a.city,
+            latitude=a.latitude,
+            longitude=a.longitude,
+            output_dir=config.OPEN_METEO_BRONZE_DIR,
+            manifest_path=config.MANIFEST_PATH,
+        )
+        print(f"Open-Meteo: saved {path}")
     elif a.cmd == "stats":
         _stats()
 
