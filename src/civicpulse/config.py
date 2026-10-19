@@ -39,7 +39,18 @@ GDELT_LICENSE = (
     "without fee; any use or redistribution must cite the GDELT Project and link "
     "https://www.gdeltproject.org/"
 )
-
+# ---- Source 3: Open-Meteo historical weather -------------------------------
+OPEN_METEO_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
+OPEN_METEO_LICENSE = (
+    "Open-Meteo historical weather data under CC BY 4.0; "
+    "credit Open-Meteo and the underlying weather data providers."
+)
+OPEN_METEO_HOURLY_VARIABLES = (
+    "temperature_2m",
+    "precipitation",
+    "wind_speed_10m",
+)
+OPEN_METEO_TIMEZONE = "UTC"
 # ---- Data quality thresholds -------------------------------------------------------------
 STALE_AFTER_HOURS = float(os.getenv("STALE_AFTER_HOURS", "3"))
 PK_BBOX = (23.5, 37.2, 60.8, 77.9)  # lat_min, lat_max, lon_min, lon_max (rough Pakistan box)
