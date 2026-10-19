@@ -13,6 +13,7 @@ load_dotenv(ROOT / ".env")
 
 DATA_DIR = ROOT / "data"
 BRONZE_DIR = DATA_DIR / "bronze"
+OPEN_METEO_BRONZE_DIR = BRONZE_DIR / "open_meteo"
 CACHE_DIR = DATA_DIR / "cache"
 MANIFEST_PATH = DATA_DIR / "manifest.csv"
 DB_PATH = DATA_DIR / "warehouse" / "civicpulse.duckdb"
