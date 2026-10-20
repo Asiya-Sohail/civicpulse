@@ -59,6 +59,10 @@ MIN_PUBLISHED = "2015-02-01"  # GDELT 2.0 starts Feb 2015
 MIN_DOCS, MIN_ROWS = 5_000, 50_000  # hackathon volume requirement (docs OR rows)
 DATASET_RAW_ROW_TARGET = 60_000
 
+# ---- Step 4: locked forecasting evaluation ---------------------------------
+FORECAST_CUTOFF_UTC = "2026-04-06T18:00:00Z"
+FORECAST_LAG_HOURS = 168
+
 # ---- Entity rules ------------------------------------------------------------------------
 KNOWN_CITIES = [
     "Karachi", "Lahore", "Islamabad", "Rawalpindi", "Faisalabad", "Multan", "Peshawar",
