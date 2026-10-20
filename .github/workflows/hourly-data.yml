@@ -40,8 +40,9 @@ jobs:
             data/warehouse
             data/manifest.csv
             logs
-          key: civicpulse-data-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: civicpulse-data-weather-v2-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
+            civicpulse-data-weather-v2-${{ github.ref_name }}-
             civicpulse-data-${{ github.ref_name }}-
             civicpulse-data-
 
@@ -50,6 +51,55 @@ jobs:
         run: |
           python -m civicpulse backfill
           test -f data/warehouse/.gdelt-history-complete-v5
+
+      - name: Fetch Open-Meteo historical weather
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          fetch_weather() {
+            city="$1"
+            latitude="$2"
+            longitude="$3"
+            start="$4"
+            end="$5"
+            file="data/bronze/open_meteo/open_meteo_${city,,}_${start}_${end}.json"
+
+            if [ -f "$file" ]; then
+              echo "Weather already cached: $file"
+            else
+              python -m civicpulse fetch-weather \
+                --city "$city" \
+                --latitude "$latitude" \
+                --longitude "$longitude" \
+                --start "$start" \
+                --end "$end"
+            fi
+          }
+
+          start="2024-10-11"
+          end="2026-10-19"
+
+          fetch_weather Bahawalpur 29.3956 71.6836 "$start" "$end"
+          fetch_weather Faisalabad 31.4504 73.1350 "$start" "$end"
+          fetch_weather Gujranwala 32.1877 74.1945 "$start" "$end"
+          fetch_weather Islamabad 33.6844 73.0479 "$start" "$end"
+          fetch_weather Karachi 24.8607 67.0011 "$start" "$end"
+          fetch_weather Lahore 31.5204 74.3587 "$start" "$end"
+          fetch_weather Mardan 34.1989 72.0407 "$start" "$end"
+          fetch_weather Multan 30.1575 71.5249 "$start" "$end"
+          fetch_weather Peshawar 34.0151 71.5249 "$start" "$end"
+          fetch_weather Sialkot 32.4945 74.5229 "$start" "$end"
+
+          fetch_weather Quetta 30.1798 66.9750 \
+            "2024-10-11" "2025-10-10"
+          fetch_weather Quetta 30.1798 66.9750 \
+            "2025-10-11" "2026-10-19"
+
+          fetch_weather Rawalpindi 33.5651 73.0169 \
+            "2024-10-11" "2025-10-10"
+          fetch_weather Rawalpindi 33.5651 73.0169 \
+            "2025-10-11" "2026-10-19"
 
       - name: Run CivicPulse pipeline
         run: make data
