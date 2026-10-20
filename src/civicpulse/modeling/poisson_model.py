@@ -4,7 +4,10 @@ from typing import Any
 
 import duckdb
 import pandas as pd
-
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder
 
 def fit_explainable_poisson_model(
     con: duckdb.DuckDBPyConnection,
@@ -75,3 +78,72 @@ def build_model_frame(
     ] = "train"
 
     return frame
+def make_poisson_preprocessor() -> ColumnTransformer:
+    """
+    Create preprocessing for the explainable Poisson model.
+
+    Categorical features:
+    - city
+    - issue_type
+    - hour_of_day
+    - day_of_week
+
+    Numeric weather features:
+    - temperature_2m
+    - precipitation
+    - wind_speed_10m
+
+    Missing weather values are imputed during training only.
+    """
+    categorical_features = [
+        "city",
+        "issue_type",
+        "hour_of_day",
+        "day_of_week",
+    ]
+
+    numeric_features = [
+        "temperature_2m",
+        "precipitation",
+        "wind_speed_10m",
+    ]
+
+    categorical_pipeline = Pipeline(
+        steps=[
+            (
+                "imputer",
+                SimpleImputer(strategy="most_frequent"),
+            ),
+            (
+                "one_hot",
+                OneHotEncoder(
+                    handle_unknown="ignore",
+                    sparse_output=False,
+                ),
+            ),
+        ]
+    )
+
+    numeric_pipeline = Pipeline(
+        steps=[
+            (
+                "imputer",
+                SimpleImputer(strategy="median"),
+            ),
+        ]
+    )
+
+    return ColumnTransformer(
+        transformers=[
+            (
+                "categorical",
+                categorical_pipeline,
+                categorical_features,
+            ),
+            (
+                "numeric",
+                numeric_pipeline,
+                numeric_features,
+            ),
+        ]
+    )

@@ -1,6 +1,10 @@
 import duckdb
+import pandas as pd
 
-from civicpulse.modeling.poisson_model import build_model_frame
+from civicpulse.modeling.poisson_model import (
+    build_model_frame,
+    make_poisson_preprocessor,
+)
 
 
 def test_build_model_frame_uses_cutoff_and_gold_weather_table(tmp_path):
@@ -41,3 +45,22 @@ def test_build_model_frame_uses_cutoff_and_gold_weather_table(tmp_path):
     assert "hour_of_day" in result.columns
     assert "day_of_week" in result.columns
     assert "n_reports" in result.columns
+def test_poisson_preprocessor_handles_categories_and_missing_weather():
+    frame = pd.DataFrame(
+        {
+            "city": ["Karachi", "Lahore"],
+            "issue_type": ["Electricity", "Water"],
+            "hour_of_day": [10, 11],
+            "day_of_week": [1, 2],
+            "temperature_2m": [30.0, None],
+            "precipitation": [0.0, 1.0],
+            "wind_speed_10m": [12.0, None],
+        }
+    )
+
+    preprocessor = make_poisson_preprocessor()
+    transformed = preprocessor.fit_transform(frame)
+
+    assert transformed.shape[0] == 2
+    assert transformed.shape[1] > 0
+    assert not pd.isna(transformed).any()
