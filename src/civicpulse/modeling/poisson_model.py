@@ -209,6 +209,133 @@ def build_model_frame(
     ] = "train"
 
     return frame
+def build_complete_model_frame(
+    con: duckdb.DuckDBPyConnection,
+    cutoff_utc: str,
+) -> pd.DataFrame:
+    """
+    Build the complete city/issue/hour modeling grid.
+
+    Required behavior:
+    - Use the Gold observation window.
+    - Include every hour in that window.
+    - Include every observed city and issue type.
+    - Fill missing n_reports with zero.
+    - Preserve weather values where available.
+    - Add train/test split using cutoff_utc.
+    - Use the same target grid for model and baseline evaluation.
+    """
+    observed = con.execute(
+        """
+        SELECT
+            hour_utc,
+            city,
+            issue_type,
+            n_reports,
+            temperature_2m,
+            precipitation,
+            wind_speed_10m
+        FROM gold.hourly_issue_counts_with_weather
+        """
+    ).df()
+
+    if observed.empty:
+        return observed.assign(
+            hour_of_day=pd.Series(dtype="int64"),
+            day_of_week=pd.Series(dtype="int64"),
+            split=pd.Series(dtype="object"),
+        )
+
+    observed["hour_utc"] = pd.to_datetime(
+        observed["hour_utc"],
+        utc=True,
+    )
+
+    start_hour = observed["hour_utc"].min().floor("h")
+    end_hour = observed["hour_utc"].max().floor("h")
+
+    hours = pd.date_range(
+        start=start_hour,
+        end=end_hour,
+        freq="h",
+        tz="UTC",
+    )
+
+    cities = sorted(observed["city"].dropna().unique())
+    issue_types = sorted(observed["issue_type"].dropna().unique())
+
+    grid = pd.MultiIndex.from_product(
+        [hours, cities, issue_types],
+        names=["hour_utc", "city", "issue_type"],
+    ).to_frame(index=False)
+
+    counts = (
+        observed[
+            [
+                "hour_utc",
+                "city",
+                "issue_type",
+                "n_reports",
+            ]
+        ]
+        .groupby(
+            ["hour_utc", "city", "issue_type"],
+            as_index=False,
+        )["n_reports"]
+        .sum()
+    )
+
+    weather = (
+        observed[
+            [
+                "hour_utc",
+                "city",
+                "temperature_2m",
+                "precipitation",
+                "wind_speed_10m",
+            ]
+        ]
+        .drop_duplicates(
+            subset=["hour_utc", "city"],
+        )
+    )
+
+    frame = grid.merge(
+        counts,
+        on=["hour_utc", "city", "issue_type"],
+        how="left",
+    )
+
+    frame = frame.merge(
+        weather,
+        on=["hour_utc", "city"],
+        how="left",
+    )
+
+    frame["n_reports"] = (
+        frame["n_reports"]
+        .fillna(0)
+        .astype("int64")
+    )
+
+    cutoff = pd.Timestamp(cutoff_utc)
+
+    if cutoff.tzinfo is None:
+        cutoff = cutoff.tz_localize("UTC")
+    else:
+        cutoff = cutoff.tz_convert("UTC")
+
+    frame["hour_of_day"] = frame["hour_utc"].dt.hour
+    frame["day_of_week"] = frame["hour_utc"].dt.dayofweek
+    frame["split"] = "test"
+    frame.loc[
+        frame["hour_utc"] < cutoff,
+        "split",
+    ] = "train"
+
+    return frame.sort_values(
+        ["hour_utc", "city", "issue_type"],
+    ).reset_index(drop=True)
 def make_poisson_preprocessor() -> ColumnTransformer:
     """
     Create preprocessing for the explainable Poisson model.

@@ -2,6 +2,7 @@ import duckdb
 import pandas as pd
 
 from civicpulse.modeling.poisson_model import (
+    build_complete_model_frame,
     build_model_frame,
     evaluate_poisson_model,
     fit_explainable_poisson_model,
@@ -190,3 +191,40 @@ def test_evaluate_poisson_model_uses_locked_test_period(tmp_path):
     assert result["test_rows"] == 1
     assert result["mae"] >= 0
     assert len(result["predictions"]) == 1
+def test_build_complete_model_frame_fills_missing_hours_with_zero(tmp_path):
+    con = duckdb.connect(str(tmp_path / "complete_grid.duckdb"))
+
+    con.execute("CREATE SCHEMA gold")
+
+    con.execute(
+        """
+        CREATE TABLE gold.hourly_issue_counts_with_weather (
+            hour_utc TIMESTAMP,
+            city VARCHAR,
+            issue_type VARCHAR,
+            n_reports BIGINT,
+            temperature_2m DOUBLE,
+            precipitation DOUBLE,
+            wind_speed_10m DOUBLE
+        )
+        """
+    )
+
+    con.execute(
+        """
+        INSERT INTO gold.hourly_issue_counts_with_weather
+        VALUES
+            ('2026-04-01 00:00:00', 'Karachi', 'Electricity', 1, 30.0, 0.0, 10.0),
+            ('2026-04-01 02:00:00', 'Karachi', 'Electricity', 2, 31.0, 0.0, 11.0)
+        """
+    )
+
+    result = build_complete_model_frame(
+        con=con,
+        cutoff_utc="2026-04-06T18:00:00Z",
+    )
+
+    assert len(result) == 3
+    assert result["n_reports"].tolist() == [1, 0, 2]
+    assert result["hour_utc"].dt.hour.tolist() == [0, 1, 2]
+    assert set(result["split"]) == {"train"}
