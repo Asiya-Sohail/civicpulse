@@ -8,6 +8,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
+from sklearn.linear_model import PoissonRegressor
 
 def fit_explainable_poisson_model(
     con: duckdb.DuckDBPyConnection,
@@ -24,6 +25,42 @@ def fit_explainable_poisson_model(
     - Do not use the chronological test period during fitting.
     - Return the fitted model and preprocessing information.
     """
+    frame = build_model_frame(
+        con=con,
+        cutoff_utc=cutoff_utc,
+    )
+
+    train = frame[frame["split"] == "train"].copy()
+
+    feature_columns = [
+        "city",
+        "issue_type",
+        "hour_of_day",
+        "day_of_week",
+        "temperature_2m",
+        "precipitation",
+        "wind_speed_10m",
+    ]
+
+    X_train = train[feature_columns]
+    y_train = train["n_reports"]
+
+    preprocessor = make_poisson_preprocessor()
+    X_train_transformed = preprocessor.fit_transform(X_train)
+
+    model = PoissonRegressor(
+        alpha=alpha,
+        max_iter=1000,
+    )
+
+    model.fit(X_train_transformed, y_train)
+
+    return {
+        "model": model,
+        "preprocessor": preprocessor,
+        "training_rows": len(train),
+        "feature_columns": feature_columns,
+    }
 def build_model_frame(
     con: duckdb.DuckDBPyConnection,
     cutoff_utc: str,

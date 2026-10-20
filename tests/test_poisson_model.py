@@ -3,6 +3,7 @@ import pandas as pd
 
 from civicpulse.modeling.poisson_model import (
     build_model_frame,
+    fit_explainable_poisson_model,
     make_poisson_preprocessor,
 )
 
@@ -64,3 +65,43 @@ def test_poisson_preprocessor_handles_categories_and_missing_weather():
     assert transformed.shape[0] == 2
     assert transformed.shape[1] > 0
     assert not pd.isna(transformed).any()
+def test_poisson_model_fit_contract_uses_training_period_only(tmp_path):
+    con = duckdb.connect(str(tmp_path / "fit.duckdb"))
+
+    con.execute("CREATE SCHEMA gold")
+
+    con.execute(
+        """
+        CREATE TABLE gold.hourly_issue_counts_with_weather (
+            hour_utc TIMESTAMP,
+            city VARCHAR,
+            issue_type VARCHAR,
+            n_reports BIGINT,
+            temperature_2m DOUBLE,
+            precipitation DOUBLE,
+            wind_speed_10m DOUBLE
+        )
+        """
+    )
+
+    con.execute(
+        """
+        INSERT INTO gold.hourly_issue_counts_with_weather
+        VALUES
+            ('2026-04-05 00:00:00', 'Karachi', 'Electricity', 1, 30.0, 0.0, 10.0),
+            ('2026-04-05 01:00:00', 'Karachi', 'Electricity', 2, 31.0, 0.0, 11.0),
+            ('2026-04-06 00:00:00', 'Lahore', 'Water', 1, 25.0, 0.5, 8.0),
+            ('2026-04-08 00:00:00', 'Karachi', 'Electricity', 3, 32.0, 0.0, 12.0)
+        """
+    )
+
+    result = fit_explainable_poisson_model(
+        con=con,
+        cutoff_utc="2026-04-06T18:00:00Z",
+        alpha=1.0,
+    )
+
+    assert isinstance(result, dict)
+    assert result["training_rows"] == 3
+    assert "model" in result
+    assert "preprocessor" in result
