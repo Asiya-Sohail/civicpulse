@@ -142,12 +142,14 @@ def _evaluate_model() -> None:
             "  poisson_actual_event_mae: "
             f"{actual_event_predictions['absolute_error'].mean()}"
         )
+        baseline_actual_event_mae = (
+            actual_event_baseline["actual"]
+            - actual_event_baseline["prediction"]
+        ).abs().mean()
+
         print(
             "  baseline_actual_event_mae: "
-            f"{(
-                actual_event_baseline["actual"]
-                - actual_event_baseline["prediction"]
-            ).abs().mean()}"
+            f"{baseline_actual_event_mae}"
         )
         print("  top_group_errors:")
         print(grouped_errors.head(10).to_string(index=False))
