@@ -5,6 +5,7 @@ from datetime import date
 
 from civicpulse import config, db, pipeline
 from civicpulse.ingest import freenewsapi, gdelt, open_meteo
+from civicpulse.modeling import baseline, poisson_model
 
 
 def _fetch_freenewsapi() -> bool:
@@ -82,7 +83,77 @@ def _stats() -> None:
     print("\nFreshness:")
     print(con.execute("SELECT * FROM gold.data_freshness").df().to_string(index=False))
 
+def _evaluate_model() -> None:
+    """Retrain and evaluate the explainable model on the locked test period."""
+    con = db.connect()
 
+    try:
+        selected = poisson_model.select_poisson_alpha(
+            con=con,
+            cutoff_utc=config.FORECAST_CUTOFF_UTC,
+        )
+
+        alpha = float(selected["selected_alpha"])
+
+        result = poisson_model.evaluate_poisson_model(
+            con=con,
+            cutoff_utc=config.FORECAST_CUTOFF_UTC,
+            alpha=alpha,
+        )
+
+        predictions = poisson_model.add_poisson_prediction_intervals(
+            result["predictions"]
+        )
+
+        grouped_errors = poisson_model.summarize_errors_by_group(
+            predictions
+        )
+
+        baseline_result = baseline.weekly_seasonal_naive(
+            con=con,
+            cutoff_utc=config.FORECAST_CUTOFF_UTC,
+            lag_hours=config.FORECAST_LAG_HOURS,
+        )
+
+        baseline_test = baseline_result[
+            baseline_result["split"] == "test"
+        ]
+
+        baseline_mae = (
+            baseline_test["actual"]
+            - baseline_test["prediction"]
+        ).abs().mean()
+
+        actual_event_predictions = predictions[
+            predictions["n_reports"] > 0
+        ]
+
+        actual_event_baseline = baseline_test[
+            baseline_test["actual"] > 0
+        ]
+
+        print("Model evaluation complete:")
+        print(f"  selected_alpha: {alpha}")
+        print(f"  cutoff_utc: {config.FORECAST_CUTOFF_UTC}")
+        print(f"  test_rows: {result['test_rows']}")
+        print(f"  poisson_full_grid_mae: {result['mae']}")
+        print(f"  baseline_full_grid_mae: {baseline_mae}")
+        print(
+            "  poisson_actual_event_mae: "
+            f"{actual_event_predictions['absolute_error'].mean()}"
+        )
+        print(
+            "  baseline_actual_event_mae: "
+            f"{(
+                actual_event_baseline["actual"]
+                - actual_event_baseline["prediction"]
+            ).abs().mean()}"
+        )
+        print("  top_group_errors:")
+        print(grouped_errors.head(10).to_string(index=False))
+
+    finally:
+        con.close()
 def main() -> None:
     p = argparse.ArgumentParser(prog="civicpulse")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -104,6 +175,10 @@ def main() -> None:
     w.add_argument("--end", required=True)
 
     sub.add_parser("stats")
+    sub.add_parser(
+    "evaluate-model",
+    help="retrain and evaluate the model on the locked test period",
+)
     a = p.parse_args()
 
     if a.cmd == "data":
@@ -141,6 +216,8 @@ def main() -> None:
         print(f"Open-Meteo: saved {path}")
     elif a.cmd == "stats":
         _stats()
+    elif a.cmd == "evaluate-model":
+        _evaluate_model()
 
 
 if __name__ == "__main__":

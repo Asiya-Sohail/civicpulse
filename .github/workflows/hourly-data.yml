@@ -104,6 +104,9 @@ jobs:
       - name: Run CivicPulse pipeline
         run: make data
 
+      - name: Retrain and evaluate model
+        run: python -m civicpulse evaluate-model
+
       - name: Save warehouse state for next run
         uses: actions/cache/save@v4
         if: always()
