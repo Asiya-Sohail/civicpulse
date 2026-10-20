@@ -22,7 +22,7 @@ Committed as the initial source declaration. No synthetic data is used. No Kaggl
 | Frequency | Historical hourly archive |
 | Role | Independent weather features; it does not label civic-issue events |
 
-Weather values will be joined to the Gold hourly timeline by UTC hour and city. The source URL, query, fetch time, SHA-256 and licence will be recorded in the manifest when this source is ingested.
+Weather values will be joined to the Gold hourly timeline by UTC hour and city. The source URL, query, fetch time, SHA-256 and licence will be recorded in the manifest when this source is ingested.Current ingestion coverage: 12 recognized Pakistan cities, with hourly observations covering the civic-event window from 2024-10-11 through 2026-10-19. The stored weather feature table contains 212,880 rows. Karachi also retains a separate two-day validation sample from 2024-10-08 through 2024-10-09.
 
 
 ## Known limitations (stated up front)
