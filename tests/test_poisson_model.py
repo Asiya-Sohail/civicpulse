@@ -2,14 +2,15 @@ import duckdb
 import pandas as pd
 
 from civicpulse.modeling.poisson_model import (
+    add_poisson_prediction_intervals,
     build_complete_model_frame,
     build_model_frame,
     evaluate_poisson_model,
     fit_explainable_poisson_model,
     make_poisson_preprocessor,
     select_poisson_alpha,
+    summarize_errors_by_group,
 )
-
 
 def test_build_model_frame_uses_cutoff_and_gold_weather_table(tmp_path):
     con = duckdb.connect(str(tmp_path / "model.duckdb"))
@@ -228,3 +229,50 @@ def test_build_complete_model_frame_fills_missing_hours_with_zero(tmp_path):
     assert result["n_reports"].tolist() == [1, 0, 2]
     assert result["hour_utc"].dt.hour.tolist() == [0, 1, 2]
     assert set(result["split"]) == {"train"}
+def test_poisson_prediction_intervals_preserve_predictions():
+    frame = pd.DataFrame(
+        {
+            "actual": [0, 1],
+            "prediction": [0.5, 2.0],
+        }
+    )
+
+    result = add_poisson_prediction_intervals(
+        frame,
+        confidence=0.95,
+    )
+
+    assert "prediction_lower" in result.columns
+    assert "prediction_upper" in result.columns
+    assert result["prediction"].tolist() == [0.5, 2.0]
+    assert (
+        result["prediction_lower"]
+        <= result["prediction_upper"]
+    ).all()
+def test_summarize_errors_by_city_and_issue():
+    predictions = pd.DataFrame(
+        {
+            "city": ["Karachi", "Karachi", "Lahore"],
+            "issue_type": [
+                "Electricity",
+                "Electricity",
+                "Water",
+            ],
+            "n_reports": [2, 0, 1],
+            "prediction": [1.0, 0.5, 2.0],
+            "absolute_error": [1.0, 0.5, 1.0],
+        }
+    )
+
+    result = summarize_errors_by_group(predictions)
+
+    assert len(result) == 2
+    assert set(result.columns) == {
+        "city",
+        "issue_type",
+        "test_rows",
+        "actual_total",
+        "predicted_total",
+        "mae",
+    }
+    assert result["test_rows"].sum() == 3

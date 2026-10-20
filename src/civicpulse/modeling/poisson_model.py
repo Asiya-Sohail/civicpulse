@@ -9,6 +9,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.linear_model import PoissonRegressor
+from scipy.stats import poisson
 
 def fit_explainable_poisson_model(
     con: duckdb.DuckDBPyConnection,
@@ -470,3 +471,82 @@ def evaluate_poisson_model(
         "mae": mae,
         "predictions": predictions_frame,
     }
+def add_poisson_prediction_intervals(
+    predictions: pd.DataFrame,
+    confidence: float = 0.95,
+) -> pd.DataFrame:
+    """
+    Add central Poisson prediction intervals.
+
+    Required behavior:
+    - Use the model prediction as the Poisson mean.
+    - Keep predictions non-negative.
+    - Add lower and upper interval columns.
+    - Do not change actual values or point predictions.
+    """
+    if not 0 < confidence < 1:
+        raise ValueError("confidence must be between 0 and 1.")
+
+    result = predictions.copy()
+
+    tail_probability = (1.0 - confidence) / 2.0
+    mean_values = result["prediction"].clip(lower=0)
+
+    result["prediction_lower"] = poisson.ppf(
+        tail_probability,
+        mean_values,
+    )
+
+    result["prediction_upper"] = poisson.ppf(
+        1.0 - tail_probability,
+        mean_values,
+    )
+
+    return result
+def summarize_errors_by_group(
+    predictions: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Summarize test errors by city and issue type.
+
+    Required output:
+    - city
+    - issue_type
+    - test_rows
+    - actual_total
+    - predicted_total
+    - mae
+    """
+    required_columns = {
+        "city",
+        "issue_type",
+        "n_reports",
+        "prediction",
+        "absolute_error",
+    }
+
+    missing = required_columns.difference(predictions.columns)
+
+    if missing:
+        raise ValueError(
+            f"Missing prediction columns: {sorted(missing)}"
+        )
+
+    return (
+        predictions
+        .groupby(
+            ["city", "issue_type"],
+            as_index=False,
+        )
+        .agg(
+            test_rows=("n_reports", "size"),
+            actual_total=("n_reports", "sum"),
+            predicted_total=("prediction", "sum"),
+            mae=("absolute_error", "mean"),
+        )
+        .sort_values(
+            ["mae", "city", "issue_type"],
+            ascending=[False, True, True],
+        )
+        .reset_index(drop=True)
+    )
