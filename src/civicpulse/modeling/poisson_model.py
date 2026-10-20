@@ -278,3 +278,68 @@ def make_poisson_preprocessor() -> ColumnTransformer:
             ),
         ]
     )
+def evaluate_poisson_model(
+    con: duckdb.DuckDBPyConnection,
+    cutoff_utc: str,
+    alpha: float,
+) -> dict[str, Any]:
+    """
+    Evaluate the explainable Poisson model on the locked chronological test set.
+
+    Required constraints:
+    - Fit preprocessing and the model using training rows only.
+    - Use the supplied alpha selected from training-only validation.
+    - Predict only rows at or after cutoff_utc.
+    - Report predictions, actual values, and MAE.
+    - Do not alter the locked cutoff or baseline evaluation.
+    """
+    fitted = fit_explainable_poisson_model(
+        con=con,
+        cutoff_utc=cutoff_utc,
+        alpha=alpha,
+    )
+
+    frame = build_model_frame(
+        con=con,
+        cutoff_utc=cutoff_utc,
+    )
+
+    test = frame[frame["split"] == "test"].copy()
+
+    feature_columns = fitted["feature_columns"]
+
+    X_test = test[feature_columns]
+
+    X_test_transformed = fitted["preprocessor"].transform(
+        X_test
+    )
+
+    predictions = fitted["model"].predict(
+        X_test_transformed
+    )
+
+    predictions_frame = test[
+        [
+            "hour_utc",
+            "city",
+            "issue_type",
+            "n_reports",
+        ]
+    ].copy()
+
+    predictions_frame["prediction"] = predictions
+    predictions_frame["absolute_error"] = (
+        predictions_frame["n_reports"]
+        - predictions_frame["prediction"]
+    ).abs()
+
+    mae = float(
+        predictions_frame["absolute_error"].mean()
+    )
+
+    return {
+        "alpha": alpha,
+        "test_rows": len(test),
+        "mae": mae,
+        "predictions": predictions_frame,
+    }

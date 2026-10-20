@@ -3,6 +3,7 @@ import pandas as pd
 
 from civicpulse.modeling.poisson_model import (
     build_model_frame,
+    evaluate_poisson_model,
     fit_explainable_poisson_model,
     make_poisson_preprocessor,
     select_poisson_alpha,
@@ -148,3 +149,44 @@ def test_select_poisson_alpha_returns_training_only_results(tmp_path):
     assert result["selected_alpha"] in (0.1, 1.0)
     assert len(result["validation_results"]) == 2
     assert result["training_rows"] == 5
+def test_evaluate_poisson_model_uses_locked_test_period(tmp_path):
+    con = duckdb.connect(str(tmp_path / "evaluation.duckdb"))
+
+    con.execute("CREATE SCHEMA gold")
+
+    con.execute(
+        """
+        CREATE TABLE gold.hourly_issue_counts_with_weather (
+            hour_utc TIMESTAMP,
+            city VARCHAR,
+            issue_type VARCHAR,
+            n_reports BIGINT,
+            temperature_2m DOUBLE,
+            precipitation DOUBLE,
+            wind_speed_10m DOUBLE
+        )
+        """
+    )
+
+    con.execute(
+        """
+        INSERT INTO gold.hourly_issue_counts_with_weather
+        VALUES
+            ('2026-04-01 00:00:00', 'Karachi', 'Electricity', 1, 30.0, 0.0, 10.0),
+            ('2026-04-02 00:00:00', 'Karachi', 'Electricity', 2, 30.0, 0.0, 10.0),
+            ('2026-04-03 00:00:00', 'Lahore', 'Water', 1, 25.0, 0.5, 8.0),
+            ('2026-04-04 00:00:00', 'Lahore', 'Water', 2, 25.0, 0.5, 8.0),
+            ('2026-04-08 00:00:00', 'Karachi', 'Electricity', 3, 32.0, 0.0, 12.0)
+        """
+    )
+
+    result = evaluate_poisson_model(
+        con=con,
+        cutoff_utc="2026-04-06T18:00:00Z",
+        alpha=1.0,
+    )
+
+    assert isinstance(result, dict)
+    assert result["test_rows"] == 1
+    assert result["mae"] >= 0
+    assert len(result["predictions"]) == 1
