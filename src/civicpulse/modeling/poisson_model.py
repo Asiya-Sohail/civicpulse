@@ -25,7 +25,7 @@ def fit_explainable_poisson_model(
     - Do not use the chronological test period during fitting.
     - Return the fitted model and preprocessing information.
     """
-    frame = build_model_frame(
+    frame = build_complete_model_frame(
         con=con,
         cutoff_utc=cutoff_utc,
     )
@@ -76,7 +76,7 @@ def select_poisson_alpha(
     - Evaluate every alpha in alpha_grid.
     - Return the selected alpha and validation results.
     """
-    frame = build_model_frame(
+    frame = build_complete_model_frame(
         con=con,
         cutoff_utc=cutoff_utc,
     )
@@ -426,7 +426,7 @@ def evaluate_poisson_model(
         alpha=alpha,
     )
 
-    frame = build_model_frame(
+    frame = build_complete_model_frame(
         con=con,
         cutoff_utc=cutoff_utc,
     )
