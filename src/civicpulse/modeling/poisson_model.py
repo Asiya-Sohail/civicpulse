@@ -61,6 +61,100 @@ def fit_explainable_poisson_model(
         "training_rows": len(train),
         "feature_columns": feature_columns,
     }
+def select_poisson_alpha(
+    con: duckdb.DuckDBPyConnection,
+    cutoff_utc: str,
+    alpha_grid: tuple[float, ...] = (0.01, 0.1, 1.0, 10.0),
+) -> dict[str, Any]:
+    """
+    Select Poisson regularization using chronological validation within training.
+
+    Required constraints:
+    - Use only rows before cutoff_utc.
+    - Never use chronological test rows for selection.
+    - Preserve time ordering in validation.
+    - Evaluate every alpha in alpha_grid.
+    - Return the selected alpha and validation results.
+    """
+    frame = build_model_frame(
+        con=con,
+        cutoff_utc=cutoff_utc,
+    )
+
+    train = (
+        frame[frame["split"] == "train"]
+        .sort_values("hour_utc")
+        .reset_index(drop=True)
+    )
+
+    feature_columns = [
+        "city",
+        "issue_type",
+        "hour_of_day",
+        "day_of_week",
+        "temperature_2m",
+        "precipitation",
+        "wind_speed_10m",
+    ]
+
+    split_index = max(1, int(len(train) * 0.8))
+
+    if split_index >= len(train):
+        split_index = len(train) - 1
+
+    fit_frame = train.iloc[:split_index]
+    validation_frame = train.iloc[split_index:]
+
+    validation_results = []
+
+    for alpha in alpha_grid:
+        preprocessor = make_poisson_preprocessor()
+
+        X_fit = preprocessor.fit_transform(
+            fit_frame[feature_columns]
+        )
+        X_validation = preprocessor.transform(
+            validation_frame[feature_columns]
+        )
+
+        model = PoissonRegressor(
+            alpha=alpha,
+            max_iter=1000,
+        )
+
+        model.fit(
+            X_fit,
+            fit_frame["n_reports"],
+        )
+
+        predictions = model.predict(X_validation)
+
+        mae = float(
+            (
+                validation_frame["n_reports"].to_numpy()
+                - predictions
+            )
+            .__abs__()
+            .mean()
+        )
+
+        validation_results.append(
+            {
+                "alpha": alpha,
+                "mae": mae,
+            }
+        )
+
+    selected = min(
+        validation_results,
+        key=lambda result: result["mae"],
+    )
+
+    return {
+        "selected_alpha": selected["alpha"],
+        "validation_results": validation_results,
+        "training_rows": len(train),
+    }
 def build_model_frame(
     con: duckdb.DuckDBPyConnection,
     cutoff_utc: str,
