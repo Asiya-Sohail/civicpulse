@@ -20,13 +20,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "beautifulsoup4>=4.12"]
 rag = [
   "beautifulsoup4>=4.12",
   "chromadb>=0.5",
   "pypdf>=5.0",
   "sentence-transformers>=3.0",
 ]
+app = ["streamlit>=1.40"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

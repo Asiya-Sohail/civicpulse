@@ -8,8 +8,12 @@ python-dotenv>=1.0
 pyarrow>=14.0
 pandera[pandas]>=0.20
 
+[app]
+streamlit>=1.40
+
 [dev]
 pytest>=8.0
+beautifulsoup4>=4.12
 
 [rag]
 beautifulsoup4>=4.12

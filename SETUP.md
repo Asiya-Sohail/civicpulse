@@ -107,9 +107,26 @@ are restored and saved via separate cache restore/save actions.
 ### One-time GitHub setup
 
 1. Push this project to a GitHub repository and make sure both files under `.github/workflows/` are committed to the **default branch**. Scheduled workflows run from the default branch.
-2. Open **Settings → Actions → General → Workflow permissions**. The hourly workflow only needs read access; the watchdog declares `actions: write` in its own workflow so it can dispatch a recovery run. If your organization restricts workflow permissions, an administrator may need to permit it.
-3. Open **Actions**, enable workflows if prompted, select **CivicPulse Hourly Pipeline**, and click **Run workflow** for the first test. Then check the run logs and `python -m pytest -q` results shown in the Actions job.
-4. Confirm that the watchdog workflow also runs. It checks the hourly run schedule and dispatches a recovery attempt when the latest run is overdue or failed.
+2. In Supabase, run the Gold-table SQL so the REST API tables and primary keys exist before the first sync.
+3. In GitHub, open **Settings → Secrets and variables → Actions → New repository secret** and add `SUPABASE_URL` and `SUPABASE_SECRET_KEY`. Get both from the Supabase project dashboard under **Settings → API Keys**. Use a server-side Secret key (`sb_secret_...`), never a Publishable key, for the hourly writer.
+4. Open **Settings → Actions → General → Workflow permissions**. The hourly workflow only needs read access; the watchdog declares `actions: write` in its own workflow so it can dispatch a recovery run. If your organization restricts workflow permissions, an administrator may need to permit it.
+5. Open **Actions**, enable workflows if prompted, select **CivicPulse Hourly Pipeline**, and click **Run workflow** for the first test. The job runs `python -m pytest -q` first and stops if a test fails; after that it runs the pipeline and `scripts/sync_gold_to_supabase.py`. Check the test summary and the `Supabase Gold sync complete` message in the run logs.
+6. Confirm that the watchdog workflow also runs. It checks the hourly run schedule and dispatches a recovery attempt when the latest run is overdue or failed.
+
+The Supabase sync uses upserts: `issue_events` and `hourly_issue_counts` conflict on `row_id`; weather conflicts on `(city, hour_utc, manifest_id)`; forecasts conflict on `(forecast_run_id, forecast_for_utc, city, issue_type)`; freshness conflicts on `source`. Keep these primary/unique keys in the Supabase tables. The workflow runner is temporary; Supabase is the persistent copy the app can read.
+
+### Streamlit deployment secrets and reading Supabase
+
+The Streamlit app reads current Gold counts and saved forecasts from Supabase. The hourly workflow remains the writer; the app does not fetch or rebuild the news/weather warehouse.
+
+For the Streamlit app, use a Publishable key plus read-only Row Level Security policies, rather than the powerful server Secret key used by the hourly writer. Keep this configuration server-side in Streamlit secrets. For local development, create the ignored file `.streamlit/secrets.toml`:
+
+```toml
+SUPABASE_URL = "https://your-project-ref.supabase.co"
+SUPABASE_PUBLISHABLE_KEY = "sb_publishable_..."
+```
+
+On Streamlit Community Cloud, open the app's **Settings → Secrets** and paste the same TOML entries there, adding `OPENROUTER_API_KEY` for cited answers. Do not commit `secrets.toml`. Enable RLS on the tables and grant the app's Publishable-key role only the `SELECT` access it needs; the GitHub workflow's Secret key can still write and bypass RLS. See Supabase's [Row Level Security guide](https://supabase.com/docs/guides/database/postgres/row-level-security) and Streamlit's [secrets management guide](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management).
 
 ### Schedule and reliability notes
 
@@ -118,6 +135,39 @@ are restored and saved via separate cache restore/save actions.
 - GitHub-hosted runners are ephemeral. The workflow uses the Actions cache to restore and save `data/` (Bronze files, manifest, cache and DuckDB state) between runs. Cache is best-effort and subject to eviction/size limits; it is not durable database storage. If losing warehouse state is unacceptable, move raw files and the database to durable object storage or a managed database before production use.
 - The hourly job searches FreeNewsAPI once or more per run depending on the number of result pages. Requests are sequential and stay well below the documented per-IP rate limit.
 - Runs are serialized to avoid overlapping warehouse writes. Failed jobs retain logs as a 14-day artifact when log files exist.
+
+## 10. Run and deploy the Streamlit app
+
+The app reads `hourly_issue_counts` and `poisson_forecasts` from Supabase through its REST API. It does not read the deployment machine's DuckDB or try to fetch the news/weather feeds. The GitHub Actions hourly job remains the writer: it builds Gold and forecasts, then upserts those rows into Supabase. The dashboard caches reads for five minutes and has a manual refresh button.
+
+The RAG document chunks and their embedding index are a separate deployment asset. This checkout includes the current Chroma index under `app_data/chroma` (about 9 MB); unlike the PDFs and raw warehouse under ignored `data/`, it will be included in Git. RAG searches that index, adds matching count/forecast evidence from Supabase, then sends it to OpenRouter. After changing PDFs or source documents, run `python -m civicpulse rag-index`, then replace `app_data/chroma` with the refreshed `data/rag/chroma` folder before pushing. Set `RAG_VECTORSTORE_DIR` in Streamlit secrets only if you store the index elsewhere. The embedding model also needs to be downloadable on the first app start or already cached by its host.
+
+### Local run
+
+1. Install the app and RAG packages:
+   ```powershell
+   .\.venv\Scripts\python.exe -m pip install -e ".[app,rag]"
+   ```
+2. Make sure the local document index exists; refresh it if the source PDFs or project reference documents changed:
+   ```powershell
+   .\.venv\Scripts\python.exe -m civicpulse rag-index
+   ```
+3. Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` and fill in the Supabase project URL, a Publishable key, and the OpenRouter API key. The real `secrets.toml` is ignored by Git.
+4. In Supabase, enable RLS on `hourly_issue_counts` and `poisson_forecasts`, grant `SELECT` to the `anon` role, and add read policies for those two tables. For a public demo whose dashboard data is intended to be public, the policy expression can be `USING (true)`. Keep the GitHub writer's `SUPABASE_SECRET_KEY` only in GitHub Actions secrets; never use it in Streamlit.
+5. Start the app:
+   ```powershell
+   .\.venv\Scripts\python.exe -m streamlit run app.py
+   ```
+
+### Streamlit Community Cloud
+
+1. Push the application code and a deployable Chroma index to GitHub. Do not commit `.streamlit/secrets.toml`, `.env`, the Supabase Secret key, or the OpenRouter key. The app entry point is `app.py`; `requirements.txt` installs the app and RAG extras.
+2. In Streamlit Community Cloud, create the app from the repository and select `app.py`.
+3. In the app's **Settings → Secrets**, paste the values from `.streamlit/secrets.toml.example` with real credentials.
+4. Confirm the Supabase read policies allow the `anon` role to select from `hourly_issue_counts` and `poisson_forecasts`.
+5. Open the app. It should show recent rows returned from Supabase; the latest forecast run is selected from the forecast table. The app does not ingest new data itself. If no rows appear, check the hourly workflow's Supabase sync log and table/RLS setup.
+
+The app uses only bounded reads (up to 500 count rows and 1,000 forecast rows) and refreshes its cache every five minutes. Its “Refresh data now” button clears that cache and reads Supabase again. The cited answer box needs the Chroma index and embedding model, Supabase read access for structured evidence, and OpenRouter for answer generation. If no supporting evidence is found, it uses CivicPulse's fixed “I currently don't have this knowledge” response.
 
 ## 9. Build and use RAG with the OpenRouter answer layer
 

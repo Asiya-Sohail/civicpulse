@@ -67,7 +67,17 @@ def split_into_chunks(text: str, chunk_size: int = 900, overlap: int = 120) -> l
         chunks.append(normalized[start:end].strip())
         if end >= len(normalized):
             break
-        start = max(start + 1, end - overlap)
+        next_start = max(start + 1, end - overlap)
+        # Keep the overlap near the requested size but start at a word boundary.
+        if next_start < len(normalized) and normalized[next_start] != " ":
+            previous_space = normalized.rfind(" ", start, next_start)
+            if previous_space >= start:
+                next_start = previous_space + 1
+            else:
+                next_space = normalized.find(" ", next_start)
+                if next_space >= 0:
+                    next_start = next_space + 1
+        start = next_start
     return chunks
 
 

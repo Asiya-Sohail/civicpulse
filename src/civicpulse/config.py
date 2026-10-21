@@ -18,7 +18,11 @@ CACHE_DIR = DATA_DIR / "cache"
 MANIFEST_PATH = DATA_DIR / "manifest.csv"
 DB_PATH = DATA_DIR / "warehouse" / "civicpulse.duckdb"
 RAG_DIR = DATA_DIR / "rag"
-RAG_VECTORSTORE_DIR = RAG_DIR / "chroma"
+_PACKAGED_RAG_DIR = ROOT / "app_data" / "chroma"
+RAG_VECTORSTORE_DIR = Path(os.getenv(
+    "RAG_VECTORSTORE_DIR",
+    str(_PACKAGED_RAG_DIR if _PACKAGED_RAG_DIR.exists() else RAG_DIR / "chroma"),
+))
 RAG_MODEL_NAME = os.getenv(
     "RAG_EMBEDDING_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 )

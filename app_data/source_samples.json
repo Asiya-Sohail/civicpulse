@@ -1,0 +1,48 @@
+{
+  "samples": {
+    "FreeNewsAPI": {
+      "title": "Four killed in Ukraine in latest Russian strikes",
+      "url": "https://www.arabnews.pk/world/four-killed-in-ukraine-in-latest-russian-strikes-3004804",
+      "published_at": "2026-10-21T07:52:51Z",
+      "country": "PK",
+      "_note": "One archived FreeNewsAPI response record; optional absent fields are omitted."
+    },
+    "GDELT": {
+      "GLOBALEVENTID": "1202981148",
+      "SQLDATE": "20241009",
+      "Actor1Name": "SCHOLAR",
+      "Actor2Name": "RAWALPINDI",
+      "EventCode": "042",
+      "NumMentions": "5",
+      "NumSources": "1",
+      "NumArticles": "5",
+      "AvgTone": "3.52941176470588",
+      "ActionGeo_FullName": "Islamabad, Islamabad, Pakistan",
+      "ActionGeo_CountryCode": "PK",
+      "ActionGeo_Lat": "33.7",
+      "ActionGeo_Long": "73.1667",
+      "SOURCEURL": "https://www.pakistantoday.com.pk/2024/10/09/non-proliferation-conference-2024-highlights-pakistans-strategic-vision/",
+      "_note": "One Pakistan action-location event from a sampled GDELT Bronze export."
+    },
+    "Open-Meteo": {
+      "latitude": 24.850615,
+      "longitude": 66.992485,
+      "timezone": "GMT",
+      "hourly": {
+        "time": [
+          "2024-10-11T00:00"
+        ],
+        "temperature_2m": [
+          27.3
+        ],
+        "precipitation": [
+          0.0
+        ],
+        "wind_speed_10m": [
+          12.6
+        ]
+      },
+      "_note": "One hourly Open-Meteo historical observation; weather is a model feature, not a civic incident label."
+    }
+  }
+}

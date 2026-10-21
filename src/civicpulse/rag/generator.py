@@ -11,9 +11,17 @@ FALLBACK = "I currently don't have this knowledge. Please refer to the internet.
 DEFAULT_MODEL = "openai/gpt-4o-mini"
 
 
-def answer_question(question: str, top_k: int = 5) -> str:
-    """Retrieve evidence, ask OpenRouter for a cited answer, or refuse without evidence."""
-    evidence = retrieve_evidence(question, top_k=top_k)
+def answer_from_evidence(
+    question: str,
+    evidence: list[dict],
+    *,
+    api_key: str | None = None,
+    model: str | None = None,
+    base_url: str | None = None,
+) -> str:
+    """Generate a cited answer from caller-supplied evidence (for example, Supabase-backed UI)."""
+    if not question.strip():
+        raise ValueError("Question must not be empty.")
     # Ignore weak document matches; retain exact Gold rows and saved model forecasts.
     threshold = float(os.getenv("RAG_MAX_DISTANCE", "0.95"))
     evidence = [
@@ -24,7 +32,7 @@ def answer_question(question: str, top_k: int = 5) -> str:
     if not evidence:
         return FALLBACK
 
-    api_key = os.getenv("OPENROUTER_API_KEY")
+    api_key = api_key or os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         raise RuntimeError("Set OPENROUTER_API_KEY in your .env file before asking RAG questions.")
 
@@ -61,7 +69,7 @@ def answer_question(question: str, top_k: int = 5) -> str:
     )
     user = f"Question: {question}\n\nRetrieved evidence:\n" + "\n\n---\n\n".join(context_parts)
     response = requests.post(
-        os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/") + "/chat/completions",
+        (base_url or os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")).rstrip("/") + "/chat/completions",
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -69,7 +77,7 @@ def answer_question(question: str, top_k: int = 5) -> str:
             "X-Title": os.getenv("OPENROUTER_APP_NAME", "CivicPulse"),
         },
         json={
-            "model": os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL),
+            "model": model or os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL),
             "temperature": 0,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         },
@@ -80,3 +88,8 @@ def answer_question(question: str, top_k: int = 5) -> str:
     if answer == FALLBACK:
         return FALLBACK
     return answer + "\n\nSources:\n" + "\n".join(sources)
+
+
+def answer_question(question: str, top_k: int = 5) -> str:
+    """Retrieve local evidence, ask OpenRouter for a cited answer, or refuse without evidence."""
+    return answer_from_evidence(question, retrieve_evidence(question, top_k=top_k))

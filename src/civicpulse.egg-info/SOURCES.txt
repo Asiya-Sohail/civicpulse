@@ -17,11 +17,13 @@ src/civicpulse/ingest/gdelt.py
 src/civicpulse/ingest/manifest.py
 src/civicpulse/ingest/open_meteo.py
 src/civicpulse/modeling/baseline.py
+src/civicpulse/modeling/forecast.py
 src/civicpulse/modeling/poisson_model.py
 src/civicpulse/quality/__init__.py
 src/civicpulse/quality/agent.py
 src/civicpulse/rag/__init__.py
 src/civicpulse/rag/documents.py
+src/civicpulse/rag/generator.py
 src/civicpulse/rag/index.py
 src/civicpulse/rag/retriever.py
 src/civicpulse/rag/sources.py
@@ -35,7 +37,10 @@ tests/test_cli.py
 tests/test_dq_agent.py
 tests/test_freenewsapi.py
 tests/test_freenewsapi_fields.py
+tests/test_hourly_forecast.py
 tests/test_open_meteo.py
 tests/test_pipeline.py
 tests/test_poisson_model.py
+tests/test_rag_generation.py
+tests/test_supabase_sync.py
 tests/test_weather_warehouse.py

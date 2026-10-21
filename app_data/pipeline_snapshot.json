@@ -1,0 +1,54 @@
+{
+  "snapshot_type": "last successful local warehouse run (packaged reference snapshot; deployment Gold and forecasts are live from Supabase)",
+  "run_id": "run_20261021T085052Z_55ff5c",
+  "finished_utc": "2026-10-21T08:53:25.079396Z",
+  "status": "SUCCESS",
+  "bronze": {
+    "FreeNewsAPI": 47,
+    "GDELT": 61207,
+    "total": 61254
+  },
+  "silver": {
+    "articles": 13837,
+    "quarantined": 0
+  },
+  "gold": {
+    "issue_events": 142,
+    "hourly_count_rows": 142
+  },
+  "weather": {
+    "rows": 17736,
+    "cities": 1,
+    "first_hour_utc": "2024-10-11T00:00:00Z",
+    "last_hour_utc": "2026-10-19T23:00:00Z",
+    "city_names": [
+      "Karachi"
+    ]
+  },
+  "dq_actions_latest_run": {
+    "pass": 31,
+    "fill": 1,
+    "fix": 3,
+    "flag": 5
+  },
+  "issue_event_rows_by_type": {
+    "Mobility": 69,
+    "Electricity": 39,
+    "Water": 18,
+    "Municipal": 16
+  },
+  "sample_silver_record": {
+    "source": "gdelt",
+    "title": null,
+    "url": "https://www.newindianexpress.com/india/2026/Oct/20/cm-mann-challenges-amit-shah-over-drug-menace-questions-centres-failure-to-curb-trafficking",
+    "publisher_domain": "newindianexpress.com",
+    "published_utc": "2026-10-20T18:00:00Z",
+    "city": "Rajasthan",
+    "issue_type": "Mobility",
+    "is_imputed": true,
+    "imputed_fields": "publisher",
+    "verification_status": "unverified",
+    "dq_flags": "",
+    "manifest_id": "4ae657273969b8636928990c372dffc4a3dcc685a389eb9bf00feb8fffb6d7a6"
+  }
+}
