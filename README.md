@@ -1,56 +1,166 @@
-# Pakistan CivicPulse - warehouse + Data Quality Agent (phase 1)
+# CivicPulse
 
-Turns Pakistani news reports into geo-tagged, *unverified-until-confirmed* public issue records
-(electricity, water, mobility, municipal). See `SETUP.md` to run it and `DATA_SOURCES.md` for the declaration.
+**A Pakistan-focused public-service reporting explorer.** CivicPulse organizes news reports about water, electricity, mobility, and municipal services by place and time. It adds experimental hourly report-count estimates and a chatbot that answers from selected reference documents and available project data.
 
+> **Please read:** CivicPulse counts classified news reports. It does not verify incidents, measure service quality, or replace official alerts. Forecasts are estimates, and current evaluation shows that a simple weekly baseline performs better than the Poisson model on the recorded test set.
+
+## What users can do
+
+- Explore reported issues across configured Pakistan city names and four issue groups.
+- See recent counts and the latest saved 24-hour forecast estimates.
+- Ask questions about civic-service guidance, report patterns, or a model estimate.
+- Follow citations back to the sources used in an answer.
+
+The Streamlit app has three main areas: **Overview**, **Ask CivicPulse**, and optional **Project details**. Live Gold counts and forecasts are read from Supabase; the app does not collect or rebuild the warehouse.
+
+## How CivicPulse works
+
+```text
+FreeNewsAPI ─┐
+GDELT sample ├─> Bronze raw files + manifest ─> DuckDB: Bronze → Silver → Gold
+Open-Meteo ──┘                                  │
+                                                ├─> Poisson hourly forecasts
+PDFs + selected reference pages ─> Chroma RAG ─┤
+                                                └─> Supabase Gold + forecasts
+                                                        │
+                                             Streamlit app + OpenRouter answers
 ```
-FreeNewsAPI ───┐                                          ┌─ silver.quarantine (failed hard checks)
-               ├─► data/bronze (immutable files + manifest.csv) ─► DuckDB bronze ─► silver ─► gold
-GDELT zips ────┘                                          │      │ DQ Agent: fix/fill/flag/quarantine ─► quality_log
-                                                          └──────┴─ gold.issue_events, gold.hourly_issue_counts, gold.data_freshness
+
+1. **Collect:** FreeNewsAPI provides recent Pakistan news articles, GDELT provides sampled historical event records, and Open-Meteo provides weather features.
+2. **Preserve and prepare:** raw responses and source provenance are retained in Bronze. Silver standardizes fields, deduplicates records, and records data-quality actions.
+3. **Build trusted tables:** quality gates check the data before Gold tables are created. Gold contains issue events, hourly report counts, freshness information, and model features.
+4. **Estimate:** the explainable Poisson regression uses Gold counts, city, issue group, hour/day, and available weather features. The scheduled job saves estimates for the next 24 hours with Poisson intervals.
+5. **Retrieve and answer:** RAG searches a curated document index. The app can also attach matching observed Gold counts or saved forecasts. OpenRouter turns that evidence into a concise cited answer; it should not calculate counts or invent facts.
+6. **Display:** the Streamlit app reads Gold counts and forecast rows from Supabase using its read-only key.
+
+## Data and reference sources
+
+### Analytics inputs
+
+- **FreeNewsAPI:** recent news articles tagged for Pakistan. The collector uses a four-hour overlap by default; article URLs are deduplicated during processing.
+- **GDELT 2.0:** historical event records sampled from four 15-minute exports per day by default. This is a sample, not a complete archive.
+- **Open-Meteo:** historical weather features and forecast weather used by the model. Weather is a model input, not evidence that a civic incident occurred.
+
+### RAG references
+
+The document index includes the local NDMA and Pakistan Citizen Portal PDFs, CivicPulse model/data documentation, and a small set of selected public pages from PMD, KW&SC, and K-Electric. The website fetcher checks site access rules and does not crawl linked pages. The index is curated reference material, not a live web search.
+
+Source-use notes: FreeNewsAPI article text remains publisher-owned; link to original publishers. Cite the GDELT Project when using its data. Open-Meteo data requires CC BY 4.0 attribution. Raw source records and provenance are kept in the local Bronze files and `data/manifest.csv`.
+
+## Model and evaluation
+
+The model estimates **classified news-report counts**, not confirmed incidents or emergency risk. CivicPulse uses a Poisson regression with city, issue group, calendar, and available weather features. Its 95% Poisson intervals are uncertainty estimates; calibrated coverage has not been established.
+
+The frozen chronological evaluation has 996,824 city/issue/hour grid rows but only 28 actual reports. The weekly seasonal baseline scored a full-grid MAE of `0.0000551752`; Poisson scored `0.0000690631`. The baseline performed better, and most test rows were zero. CivicPulse does not claim that Poisson improves forecast accuracy. Sparse data and noisy location labels also limit city-level comparisons.
+
+The target is sparse, the baseline performed better, and prediction intervals have not been shown to be calibrated. Use results for exploratory monitoring and evaluation, not operational decisions or public safety alerts.
+
+## Set up locally (Windows PowerShell)
+
+Install Python 3.10 or newer, Git, and VS Code. From the repository folder:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -e ".[dev,app,rag]"
 ```
 
-## Stack (all free)
-| Need | Choice | Why |
-|---|---|---|
-| Warehouse | DuckDB (single file) | no server, fast SQL on 100k+ rows, reads parquet |
-| Validation | Pandera | named checks map 1:1 to `quality_log` entries |
-| Raw storage | read-only files + `manifest.csv` (SHA-256) | reproducible, auditable |
-| Next phases | Prefect OSS (scheduler), LightGBM (forecast), Gradio on Hugging Face Spaces (dashboard) | free tiers |
+The first RAG index build may download the multilingual embedding model. Network access is needed for source collection and that initial model download.
 
-## Layers
-- **Bronze**: files exactly as received (read-only). DuckDB bronze tables are rebuilt from them.
-- **Silver**: one typed schema for both sources; UTC timestamps (PKT only in `*_pkt_display` columns); duplicate links removed; city / issue type / service extracted by rules in `config.py`. Every row retains its Bronze path, raw SHA-256, and manifest ID.
-- **Gold**: `issue_events` (one row per reported issue) and `hourly_issue_counts` (hour x city x issue, for the model). `row_id` is a hash of the URL / grain, so it is identical on every rebuild. Event records carry their single raw-file provenance; hourly records carry the contributing manifest IDs and file paths.
-- **Live source**: FreeNewsAPI keyless search, filtered to Pakistan and polled hourly with an overlapping crawl-time window. Source article IDs, titles, timestamps, publisher names, and URLs are retained; repeated URLs are deduplicated downstream.
+Create a private local environment file for OpenRouter and other optional settings:
 
-## DQ agent (`src/civicpulse/quality/agent.py`)
-Fix (trim, `KHI` -> Karachi, canonical URLs, dedupe) -> Fill (`is_imputed=True` + `imputed_fields`) -> Quarantine
-(invalid required ID/URL/timestamp, timestamp out of range, urgency outside 0-10, invalid provenance) -> Flag
-(unverified reports, impossible/out-of-Pakistan coordinates, missing optional fields, non-PK country tag, stale feed,
-and category-share drift). The initial source/issue/city distribution baseline is persisted after the first successful
-Gold build and then held fixed; a share change above 20 percentage points is flagged. Every audit record has a named
-rule, action, reason, UTC timestamp, and affected-row count in `quality_log`.
+```powershell
+Copy-Item .env.example .env
+```
 
-## Reproducibility and volume
-`make data` on a clean data directory runs the historical GDELT sample backfill, fetches current FreeNewsAPI and recent
-GDELT files, verifies the manifest inventory and SHA-256 hashes, then builds and gates Bronze → Silver → Gold. A versioned
-completion marker prevents the full historical download from repeating on hourly runs. Historical 404 export slots are
-reported as unavailable; failed downloads stop the backfill. This requires network access to both source endpoints.
-GDELT defaults to four sampled exports per day (out of 96); counts are measured from fetched raw files and are not
-artificially duplicated. The configured build gate requires at least 60,000 Bronze rows and at least 730 days of
-historical sampling. See [DATA_SOURCES.md](DATA_SOURCES.md) for terms, provenance, and limits.
+Add your `OPENROUTER_API_KEY` to `.env` to enable generated answers. Do not commit `.env` or any real key. The Streamlit app also accepts secrets in `.streamlit/secrets.toml`.
 
-The pre-evaluation deterministic forecasting baseline is weekly seasonal naive: predict a city's and issue type's count
-for each UTC hour from the same UTC hour one week earlier (t−168 hours), treating unobserved city/issue/hour bins as
-zero inside the declared observation window. Freeze a chronological holdout and compare MAE before evaluating a more
-complex model. No model performance is claimed.
+## Run the project
 
-The requested third-party official source is not yet included. NDMA's published terms restrict use to personal,
-non-commercial access and prohibit unauthorized reproduction/distribution; its `robots.txt` disallows `/api`. Do not
-enable an NDMA fetch until explicit reuse permission or a suitable open licence is available. FreeNewsAPI and GDELT are
-both media-derived and should not be described as truly independent primary sources.
+### Build and inspect the data
 
-## Caveats
-- Imputed urgency (GDELT rows have none) is a per-issue median: it is marked, but it carries no real signal. Exclude `is_imputed` rows when judging urgency.
-- Tests use tiny fixtures in `tests/` only; they are never loaded by `make data`.
+```powershell
+.\.venv\Scripts\python.exe -m civicpulse data
+.\.venv\Scripts\python.exe -m civicpulse stats
+```
+
+`data` ensures the historical GDELT sample is present, fetches current source data, and rebuilds Bronze, Silver, and Gold. The first backfill can take a while. `stats` prints warehouse counts, quality summaries, and freshness.
+
+Other useful commands:
+
+```powershell
+.\.venv\Scripts\python.exe -m civicpulse build           # rebuild from files already fetched
+.\.venv\Scripts\python.exe -m civicpulse evaluate-model  # run the locked historical evaluation
+.\.venv\Scripts\python.exe -m civicpulse forecast-model  # fit on current Gold and save 24-hour estimates
+```
+
+### Build and query RAG
+
+```powershell
+.\.venv\Scripts\python.exe -m civicpulse rag-index
+.\.venv\Scripts\python.exe -m civicpulse rag-retrieve --question "How can a resident report a water supply problem?"
+.\.venv\Scripts\python.exe -m civicpulse rag-answer --question "How can a resident report a water supply problem?"
+```
+
+`rag-retrieve` returns evidence without generating an answer. `rag-answer` sends the question and retrieved evidence to OpenRouter. Rebuild the index after changing its PDFs or reference documents. Gold rows and forecasts are read as structured evidence; they are not embedded into the document index.
+
+### Start the web app
+
+Set these values in `.streamlit/secrets.toml` for local use, or in Streamlit Community Cloud **App settings → Secrets** after deployment:
+
+```toml
+SUPABASE_URL = "https://your-project-ref.supabase.co"
+SUPABASE_PUBLISHABLE_KEY = "your-read-only-publishable-key"
+OPENROUTER_API_KEY = "your-openrouter-key"
+OPENROUTER_MODEL = "openai/gpt-4o-mini"
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+```
+
+Enable Row Level Security and read policies for the app’s required tables. Never put the Supabase Secret/service key in Streamlit secrets or browser-facing code.
+
+```powershell
+.\.venv\Scripts\python.exe -m streamlit run app.py
+```
+
+### Run automated checks
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+The test suite uses fixtures and mocks for external services; the GitHub workflow runs it before the hourly data job.
+
+## Hourly workflow and deployment
+
+`.github/workflows/hourly-data.yml` runs at minute 17 of each UTC hour (when GitHub starts the scheduled job). It runs tests, restores cached warehouse state, collects/builds data, evaluates the locked model, creates the next 24-hour Poisson forecasts, and upserts Gold and forecast rows into Supabase. The watchdog workflow checks for missed or failed hourly runs and can dispatch recovery. GitHub schedules are best-effort, not a real-time guarantee; the Actions cache is also best-effort storage.
+
+Required GitHub Actions repository secrets for the writer:
+
+- `SUPABASE_URL`
+- `SUPABASE_SECRET_KEY` — server-side write credential; never use in the Streamlit app
+
+The Streamlit app is deployed separately from the repository with `app.py` as its entry point. It reads Supabase using the Publishable key and RLS. Supabase is the persistent store for the app’s Gold counts and forecasts; GitHub Actions does the hourly writing. Configure the Chroma index and OpenRouter key as deployment assets/secrets as described above.
+
+See [SETUP.md](SETUP.md) for additional local setup and scheduling instructions.
+
+## Repository map
+
+```text
+app.py                          Streamlit overview, project details, and cited chat
+src/civicpulse/ingest/          FreeNewsAPI, GDELT, and Open-Meteo collection
+src/civicpulse/warehouse/       Bronze, Silver, and Gold transformations
+src/civicpulse/quality/          Data-quality checks and action logging
+src/civicpulse/modeling/         Poisson forecasting and baseline evaluation
+src/civicpulse/rag/              Document parsing, Chroma indexing, retrieval, answers
+scripts/sync_gold_to_supabase.py Hourly Gold and forecast upserts
+tests/                           Automated unit/integration tests with fixtures
+app_data/chroma/                 Packaged RAG index used by the deployed app
+```
+
+## Main limits to keep in mind
+
+- News coverage reflects available sources and media attention, not every service issue.
+- GDELT history is sampled; source classifications and location labels can be noisy.
+- Coverage varies by city, issue, and time. Missing rows do not mean zero real-world incidents.
+- Poisson is experimental and did not beat the weekly baseline in the recorded evaluation.
+- RAG answers depend on the selected documents and the freshness of indexed references; check linked sources for current official guidance.
