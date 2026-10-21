@@ -210,7 +210,7 @@ def test_generator_sends_grounded_context_and_returns_citations(monkeypatch):
             pass
 
         def json(self):
-            return {"choices": [{"message": {"content": "Call the official line [S1]."}}]}
+            return {"choices": [{"message": {"content": "Call the official line [S1].\n- Use the published service notice."}}]}
 
     def fake_post(url, **kwargs):
         captured["url"] = url
@@ -222,8 +222,9 @@ def test_generator_sends_grounded_context_and_returns_citations(monkeypatch):
     answer = generator.answer_question("How can I report a water issue?")
 
     assert answer.startswith("Call the official line [S1].")
-    assert "Sources:" in answer
-    assert "https://example.gov/water" in answer
+    assert "Reference: [S1] [Water service notice](https://example.gov/water)." in answer
+    assert "\n" not in answer
+    assert "- " not in answer
     assert "only the supplied evidence" in captured["json"]["messages"][0]["content"]
     assert "Residents can call" in captured["json"]["messages"][1]["content"]
     assert captured["headers"]["Authorization"] == "Bearer test-key"
