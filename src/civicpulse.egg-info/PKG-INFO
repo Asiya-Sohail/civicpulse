@@ -14,3 +14,8 @@ Requires-Dist: pyarrow>=14.0
 Requires-Dist: pandera[pandas]>=0.20
 Provides-Extra: dev
 Requires-Dist: pytest>=8.0; extra == "dev"
+Provides-Extra: rag
+Requires-Dist: beautifulsoup4>=4.12; extra == "rag"
+Requires-Dist: chromadb>=0.5; extra == "rag"
+Requires-Dist: pypdf>=5.0; extra == "rag"
+Requires-Dist: sentence-transformers>=3.0; extra == "rag"

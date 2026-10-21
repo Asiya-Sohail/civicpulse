@@ -20,6 +20,11 @@ src/civicpulse/modeling/baseline.py
 src/civicpulse/modeling/poisson_model.py
 src/civicpulse/quality/__init__.py
 src/civicpulse/quality/agent.py
+src/civicpulse/rag/__init__.py
+src/civicpulse/rag/documents.py
+src/civicpulse/rag/index.py
+src/civicpulse/rag/retriever.py
+src/civicpulse/rag/sources.py
 src/civicpulse/warehouse/__init__.py
 src/civicpulse/warehouse/bronze.py
 src/civicpulse/warehouse/gold.py

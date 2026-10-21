@@ -9,7 +9,7 @@ from pathlib import Path
 
 from civicpulse import config
 
-RAW_SOURCE_DIRS = {"freenewsapi", "gdelt", "open_meteo"}
+RAW_SOURCE_DIRS = {"freenewsapi", "gdelt", "open_meteo", "rag_sources"}
 FIELDS = [
     "file_path", "source", "source_url", "search_query",
     "fetch_timestamp_utc", "sha256", "bytes", "license_terms",

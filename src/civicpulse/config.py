@@ -17,6 +17,11 @@ OPEN_METEO_BRONZE_DIR = BRONZE_DIR / "open_meteo"
 CACHE_DIR = DATA_DIR / "cache"
 MANIFEST_PATH = DATA_DIR / "manifest.csv"
 DB_PATH = DATA_DIR / "warehouse" / "civicpulse.duckdb"
+RAG_DIR = DATA_DIR / "rag"
+RAG_VECTORSTORE_DIR = RAG_DIR / "chroma"
+RAG_MODEL_NAME = os.getenv(
+    "RAG_EMBEDDING_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+)
 
 # ---- Source 1: FreeNewsAPI (keyless live search) ----------------------------------------
 FREENEWSAPI_BASE_URL = "https://freenewsapi.ai"

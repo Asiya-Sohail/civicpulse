@@ -177,6 +177,13 @@ def main() -> None:
     w.add_argument("--end", required=True)
 
     sub.add_parser("stats")
+    sub.add_parser("rag-index", help="fetch configured public reference pages and build the local RAG index")
+    rag = sub.add_parser("rag-retrieve", help="retrieve document, Gold, and Poisson backtest context without generating an answer")
+    rag.add_argument("--question", required=True)
+    rag.add_argument("--top-k", type=int, default=5)
+    gen = sub.add_parser("rag-answer", help="answer a question from retrieved evidence using OpenRouter")
+    gen.add_argument("--question", required=True)
+    gen.add_argument("--top-k", type=int, default=5)
     sub.add_parser(
     "evaluate-model",
     help="retrain and evaluate the model on the locked test period",
@@ -218,6 +225,23 @@ def main() -> None:
         print(f"Open-Meteo: saved {path}")
     elif a.cmd == "stats":
         _stats()
+    elif a.cmd == "rag-index":
+        from civicpulse.rag.index import build_index
+        result = build_index()
+        print(
+            f"RAG index complete: {result['documents']} chunks; "
+            f"{result['local_pdfs']} local PDFs; "
+            f"{result['website_pages']} website pages in the index"
+        )
+        for warning in result["warnings"]:
+            print(f"WARNING: {warning}")
+    elif a.cmd == "rag-retrieve":
+        from civicpulse.rag.retriever import retrieve_context
+        context = retrieve_context(a.question, top_k=a.top_k)
+        print(context)
+    elif a.cmd == "rag-answer":
+        from civicpulse.rag.generator import answer_question
+        print(answer_question(a.question, top_k=a.top_k))
     elif a.cmd == "evaluate-model":
         _evaluate_model()
 

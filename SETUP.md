@@ -117,3 +117,61 @@ are restored and saved via separate cache restore/save actions.
 - GitHub-hosted runners are ephemeral. The workflow uses the Actions cache to restore and save `data/` (Bronze files, manifest, cache and DuckDB state) between runs. Cache is best-effort and subject to eviction/size limits; it is not durable database storage. If losing warehouse state is unacceptable, move raw files and the database to durable object storage or a managed database before production use.
 - The hourly job searches FreeNewsAPI once or more per run depending on the number of result pages. Requests are sequential and stay well below the documented per-IP rate limit.
 - Runs are serialized to avoid overlapping warehouse writes. Failed jobs retain logs as a 14-day artifact when log files exist.
+
+## 9. Build and use RAG with the OpenRouter answer layer
+
+### What the system does
+
+1. Reads `data/pdf/NDMA.pdf`, `data/pdf/PCP.pdf`, and CivicPulse model/data documentation.
+2. Fetches at most one page from each configured website: PMD, KW&SC, and K-Electric. It checks `robots.txt` and does not crawl links. Citizen Portal guidance comes from `PCP.pdf`.
+3. Archives fetched pages and PDF copies under `data/bronze/rag_sources` and records provenance in `data/manifest.csv`.
+4. Extracts text, splits it into chunks, and attaches source metadata such as title, publisher, URL, date, location, and chunk ID.
+5. Runs a multilingual embedding model locally and saves the searchable vectors and metadata in Chroma under `data/rag/`.
+6. For a question, searches Chroma for relevant document chunks.
+7. For a question naming a recognized city or issue, reads matching **observed report counts** directly from `gold.hourly_issue_counts`. These are news-report counts, not confirmed incidents.
+8. For a question naming both a recognized city and issue, also computes matching Poisson **held-out historical test predictions** and 95% intervals. These are backtest results, not live future forecasts; they are computed at query time and are not saved in Gold.
+9. `rag-retrieve` displays the retrieved context only. `rag-answer` sends that context and the question to OpenRouter, which is instructed to answer from the supplied evidence, cite sources, and use the fallback message if the evidence is insufficient.
+
+### Setup and commands (PowerShell)
+
+Install the optional RAG packages once:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[rag]"
+```
+
+To refresh the warehouse from its data sources, run:
+
+```powershell
+.\.venv\Scripts\python.exe -m civicpulse data
+```
+
+This updates Gold data used for observed counts and model evaluation. Gold rows and Poisson backtest results are read/computed at query time; they are not stored in the vector index.
+
+Build or refresh the document index:
+
+```powershell
+.\.venv\Scripts\python.exe -m civicpulse rag-index
+```
+
+The first index build downloads the embedding model. Later builds reuse its local cache. Re-run `rag-index` after changing the PDFs or reference documents; `rag-answer` does not refresh website/document content automatically.
+
+To inspect retrieved evidence without generating an answer:
+
+```powershell
+.\.venv\Scripts\python.exe -m civicpulse rag-retrieve --question "How can a resident report a water supply problem?"
+```
+
+To generate an answer with citations, copy the OpenRouter settings from `.env.example` to your private `.env` file and set `OPENROUTER_API_KEY`. Keep the key private. Then run:
+
+```powershell
+.\.venv\Scripts\python.exe -m civicpulse rag-answer --question "How can a resident report a water supply problem?"
+```
+
+For a question about model results, include both a known city and issue, for example:
+
+```powershell
+.\.venv\Scripts\python.exe -m civicpulse rag-answer --question "What did the Poisson model predict for water reports in Karachi?"
+```
+
+The answer includes source titles/publishers/URLs or stable Gold/model result IDs. If evidence is insufficient, it returns: `I currently don't have this knowledge. Please refer to the internet.` The current hourly data workflow does not automatically rebuild the RAG index or run the OpenRouter answer layer.

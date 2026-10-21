@@ -10,3 +10,9 @@ pandera[pandas]>=0.20
 
 [dev]
 pytest>=8.0
+
+[rag]
+beautifulsoup4>=4.12
+chromadb>=0.5
+pypdf>=5.0
+sentence-transformers>=3.0
