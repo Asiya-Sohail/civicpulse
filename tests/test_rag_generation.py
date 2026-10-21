@@ -126,7 +126,9 @@ def test_retrieve_evidence_combines_docs_gold_and_poisson_without_network(monkey
                 "distances": [[0.2]],
             }
 
-    monkeypatch.setattr(index, "open_collection", lambda: (None, Collection()))
+    # Patch the symbol used by retriever: it imported open_collection directly,
+    # so patching index.open_collection after import would not intercept the call.
+    monkeypatch.setattr(retriever, "open_collection", lambda: (None, Collection()))
     monkeypatch.setattr(retriever, "_gold_context", lambda question, limit: [
         _doc(evidence_type="gold_row", row_id="h_1")
     ])
