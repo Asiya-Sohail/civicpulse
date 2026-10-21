@@ -4,7 +4,8 @@ from __future__ import annotations
 import os
 import json
 import re
-from datetime import datetime, timedelta, timezone
+import calendar
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -87,6 +88,22 @@ def _supabase_get(table: str, *, select: str, order: str, limit: int,
     return payload
 
 
+def _supabase_get_all(table: str, *, select: str, order: str,
+                      filters: dict[str, str] | None = None) -> list[dict]:
+    """Page through a bounded time range so longer periods are not silently truncated."""
+    rows: list[dict] = []
+    page_size = 1000
+    for offset in range(0, 500_000, page_size):
+        page = _supabase_get(
+            table, select=select, order=order, limit=page_size,
+            filters=filters, offset=offset,
+        )
+        rows.extend(page)
+        if len(page) < page_size:
+            return rows
+    raise RuntimeError(f"Supabase time-range query for {table} exceeded 500,000 rows.")
+
+
 def _detect_issue_type(question: str) -> str | None:
     """Recognize the four supported issue groups, including bare group names."""
     lowered = question.casefold()
@@ -106,6 +123,190 @@ def _is_city_ranking_question(question: str) -> bool:
         question,
         re.IGNORECASE,
     ))
+
+
+def _ranking_period(question: str, now_utc: datetime) -> dict[str, object]:
+    """Return the requested calendar period; no qualifier means all available history."""
+    pkt_now = pd.Timestamp(now_utc).tz_convert("Asia/Karachi")
+    today = pkt_now.date()
+    lowered = question.casefold()
+
+    def month_number(name: str) -> int | None:
+        normalized = name.rstrip(".").lower().replace("sept", "sep")
+        return next(
+            (month for month in range(1, 13)
+             if normalized in {calendar.month_name[month].lower(), calendar.month_abbr[month].lower()}),
+            None,
+        )
+
+    def day_range(day: date, label: str) -> dict[str, object]:
+        start_pkt = pd.Timestamp(day).tz_localize("Asia/Karachi")
+        end_pkt = start_pkt + pd.Timedelta(days=1)
+        return {
+            "kind": "range",
+            "granularity": "day",
+            "start_date": day.isoformat(),
+            "end_date": (day + timedelta(days=1)).isoformat(),
+            "start": start_pkt.tz_convert("UTC").to_pydatetime(),
+            "end": end_pkt.tz_convert("UTC").to_pydatetime(),
+            "label": label,
+        }
+
+    if re.search(r"\b(today|this day)\b", lowered):
+        return day_range(today, f"{today:%d %b %Y} (Pakistan time)")
+    if re.search(r"\byesterday\b", lowered):
+        yesterday = today - timedelta(days=1)
+        return day_range(yesterday, f"{yesterday:%d %b %Y} (Pakistan time)")
+
+    # An explicitly named weekday means its most recent occurrence in Pakistan time.
+    weekdays = {
+        "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+        "friday": 4, "saturday": 5, "sunday": 6,
+    }
+    weekday_match = re.search(
+        r"\b(?:on|for|during|from)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b",
+        lowered,
+    )
+    if weekday_match:
+        target = weekdays[weekday_match.group(1)]
+        day = today - timedelta(days=(today.weekday() - target) % 7)
+        return day_range(day, f"{day:%d %b %Y} ({weekday_match.group(1).title()}, Pakistan time)")
+
+    # Parse unambiguous numeric dates such as 2026-10-21 or 21/10/2026.
+    iso_match = re.search(r"\b(20\d{2})[-/](\d{1,2})[-/](\d{1,2})\b", question)
+    dmy_match = re.search(r"\b(\d{1,2})/(\d{1,2})/(20\d{2})\b", question)
+    parsed_day = None
+    if iso_match:
+        try:
+            parsed_day = date(int(iso_match[1]), int(iso_match[2]), int(iso_match[3]))
+        except ValueError:
+            pass
+    elif dmy_match:
+        try:
+            parsed_day = date(int(dmy_match[3]), int(dmy_match[2]), int(dmy_match[1]))
+        except ValueError:
+            pass
+    else:
+        month_names = (
+            "january|february|march|april|may|june|july|august|september|october|"
+            "november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec"
+        )
+        month_first = re.search(
+            rf"\b({month_names})\.?\s+(\d{{1,2}})(?:st|nd|rd|th)?(?:,?\s+(20\d{{2}}))?\b",
+            lowered,
+        )
+        day_first = re.search(
+            rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s+({month_names})\.?(?:,?\s+(20\d{{2}}))?\b",
+            lowered,
+        )
+        for match, month_group, day_group, year_group in (
+            (month_first, 1, 2, 3), (day_first, 2, 1, 3),
+        ):
+            if match:
+                try:
+                    month = month_number(match.group(month_group))
+                    if month is None:
+                        raise ValueError("Unrecognized month")
+                    year = int(match.group(year_group)) if match.group(year_group) else today.year
+                    parsed_day = date(year, month, int(match.group(day_group)))
+                except (ValueError, TypeError):
+                    parsed_day = None
+                break
+    if parsed_day:
+        return day_range(parsed_day, f"{parsed_day:%d %b %Y} (Pakistan time)")
+
+    # Explicit year or month requests use that calendar period.
+    year_match = re.search(r"\b(20\d{2})\b", question)
+    if year_match:
+        year = int(year_match.group(1))
+        month_names = (
+            "january|february|march|april|may|june|july|august|september|october|"
+            "november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec"
+        )
+        month_match = re.search(rf"\b({month_names})\b", lowered)
+        if month_match:
+            month = month_number(month_match.group(1))
+            if month is not None:
+                start_date = date(year, month, 1)
+                end_date = date(year + (month == 12), (month % 12) + 1, 1)
+                start_pkt = pd.Timestamp(start_date).tz_localize("Asia/Karachi")
+                end_pkt = pd.Timestamp(end_date).tz_localize("Asia/Karachi")
+                return {
+                    "kind": "range",
+                    "granularity": "day",
+                    "start_date": start_date.isoformat(),
+                    "end_date": end_date.isoformat(),
+                    "start": start_pkt.tz_convert("UTC").to_pydatetime(),
+                    "end": end_pkt.tz_convert("UTC").to_pydatetime(),
+                    "label": f"{start_date:%B %Y} (Pakistan time)",
+                }
+        start_day = date(year, 1, 1)
+        end_day = date(year + 1, 1, 1)
+        start_pkt = pd.Timestamp(start_day).tz_localize("Asia/Karachi")
+        end_pkt = pd.Timestamp(end_day).tz_localize("Asia/Karachi")
+        return {
+            "kind": "range",
+            "granularity": "day",
+            "start_date": start_day.isoformat(),
+            "end_date": end_day.isoformat(),
+            "start": start_pkt.tz_convert("UTC").to_pydatetime(),
+            "end": end_pkt.tz_convert("UTC").to_pydatetime(),
+            "label": f"calendar year {year} (Pakistan time)",
+        }
+
+    if re.search(r"\b(this week|last week)\b", lowered):
+        monday = today - timedelta(days=today.weekday())
+        start_day = monday if "this week" in lowered else monday - timedelta(days=7)
+        end_day = start_day + timedelta(days=7)
+        start_pkt = pd.Timestamp(start_day).tz_localize("Asia/Karachi")
+        end_pkt = pd.Timestamp(end_day).tz_localize("Asia/Karachi")
+        label = "this week" if "this week" in lowered else "last week"
+        return {
+            "kind": "range",
+            "granularity": "day",
+            "start_date": start_day.isoformat(),
+            "end_date": end_day.isoformat(),
+            "start": start_pkt.tz_convert("UTC").to_pydatetime(),
+            "end": end_pkt.tz_convert("UTC").to_pydatetime(),
+            "label": f"{label} ({start_day:%d %b}–{(end_day - timedelta(days=1)):%d %b %Y}, Pakistan time)",
+        }
+
+    if re.search(r"\b(this month|last month)\b", lowered):
+        first_this_month = today.replace(day=1)
+        if "last month" in lowered:
+            end_day = first_this_month
+            start_day = (first_this_month - timedelta(days=1)).replace(day=1)
+            label = f"{start_day:%B %Y} (Pakistan time)"
+        else:
+            start_day = first_this_month
+            end_day = date(today.year + (today.month == 12), (today.month % 12) + 1, 1)
+            label = f"this month ({start_day:%B %Y}, Pakistan time)"
+        start_pkt = pd.Timestamp(start_day).tz_localize("Asia/Karachi")
+        end_pkt = pd.Timestamp(end_day).tz_localize("Asia/Karachi")
+        return {
+            "kind": "range",
+            "granularity": "day",
+            "start_date": start_day.isoformat(),
+            "end_date": end_day.isoformat(),
+            "start": start_pkt.tz_convert("UTC").to_pydatetime(),
+            "end": end_pkt.tz_convert("UTC").to_pydatetime(),
+            "label": label,
+        }
+
+    if re.search(
+        r"\b(now|right now|at this time|currently|current|recent(?:ly)?|latest|"
+        r"last 24 hours|past 24 hours|last hour|past hour)\b",
+        lowered,
+    ):
+        current_hour = now_utc.replace(minute=0, second=0, microsecond=0)
+        end = current_hour
+        start = end - timedelta(hours=24)
+        return {
+            "kind": "range", "granularity": "hour", "start": start, "end": end,
+            "label": "the latest 24 complete hours",
+        }
+
+    return {"kind": "all"}
 
 
 def _is_guidance_question(question: str) -> bool:
@@ -142,38 +343,182 @@ def _freshness_note(now_utc: datetime) -> str:
     return f"Gold sync checked at {checked_label}."
 
 
+def _issue_city_count_answer(question: str) -> str | None:
+    """Answer a named city/issue count from the requested period in Gold."""
+    if not re.search(r"\b(how many|number of|total (?:reports|count)|count of)\b", question, re.I):
+        return None
+    city = config.detect_city(question)
+    issue = _detect_issue_type(question)
+    if city is None or issue is None:
+        return None
+
+    now_utc = datetime.now(timezone.utc)
+    period = _ranking_period(question, now_utc)
+    try:
+        if period["kind"] == "all":
+            rows = _supabase_get(
+                "issue_city_report_totals",
+                select="city,issue_type,total_reports,first_report_utc,last_report_utc",
+                order="total_reports.desc",
+                limit=1000,
+                filters={"city": f"eq.{city}", "issue_type": f"eq.{issue}"},
+            )
+            value_key = "total_reports"
+        elif period["granularity"] == "hour":
+            rows = _supabase_get(
+                "hourly_issue_counts",
+                select="row_id,hour_utc,city,issue_type,n_reports",
+                order="hour_utc.desc",
+                limit=1000,
+                filters={
+                    "city": f"eq.{city}",
+                    "issue_type": f"eq.{issue}",
+                    "and": (
+                        f"(hour_utc.gte.{period['start'].isoformat()},"
+                        f"hour_utc.lt.{period['end'].isoformat()})"
+                    ),
+                },
+            )
+            value_key = "n_reports"
+        else:
+            rows = _supabase_get_all(
+                "issue_city_report_daily",
+                select="city,issue_type,report_date,total_reports",
+                order="report_date.desc",
+                filters={
+                    "city": f"eq.{city}",
+                    "issue_type": f"eq.{issue}",
+                    "and": (
+                        f"(report_date.gte.{period['start_date']},"
+                        f"report_date.lt.{period['end_date']})"
+                    ),
+                },
+            )
+            value_key = "total_reports"
+    except Exception:
+        return (
+            f"I couldn't read Gold counts for {city} {issue}. Check the Supabase connection and "
+            "read permissions. Ensure both aggregate views from "
+            "supabase/issue_city_report_totals.sql have been created."
+        )
+
+    if not rows:
+        timeframe = "all available history" if period["kind"] == "all" else str(period["label"])
+        return (
+            f"CivicPulse Gold has no readable {issue} report rows for {city} during {timeframe}. "
+            "That means data is unavailable for this query; it does not mean there were no incidents. "
+            "Reference: CivicPulse Gold hourly_issue_counts in Supabase."
+        )
+    total = sum(int(row.get(value_key) or 0) for row in rows)
+    timeframe = "across all available Gold history" if period["kind"] == "all" else f"for {period['label']}"
+    freshness = _freshness_note(now_utc)
+    return (
+        f"CivicPulse Gold recorded {total} classified {issue} news reports for {city} "
+        f"{timeframe}. {freshness} These are news-report counts, not confirmed incidents. "
+        "Reference: CivicPulse Gold hourly_issue_counts in Supabase."
+    )
+
+
 def _issue_city_ranking_answer(question: str) -> str | None:
-    """Rank city report counts for an issue using a fixed 24-hour Gold window."""
+    """Rank issue counts over all Gold history or the period named in the question."""
     issue = _detect_issue_type(question)
     if issue is None or not _is_city_ranking_question(question):
         return None
 
     now_utc = datetime.now(timezone.utc)
+    period = _ranking_period(question, now_utc)
+    use_time_window = period["kind"] != "all"
+    use_rolling_24h = period.get("label") == "the latest 24 complete hours"
     current_hour = now_utc.replace(minute=0, second=0, microsecond=0)
     latest_complete_hour = current_hour - timedelta(hours=1)
-    window_start = latest_complete_hour - timedelta(hours=23)
-    window_end = latest_complete_hour + timedelta(hours=1)
+    window_start = period.get("start") if use_time_window else None
+    window_end = period.get("end") if use_time_window else None
     city_filter = "in.(" + ",".join(f'"{city}"' for city in config.KNOWN_CITIES) + ")"
     try:
-        rows = _supabase_get(
-            "hourly_issue_counts",
-            select="row_id,hour_utc,city,issue_type,n_reports",
-            order="hour_utc.desc",
-            limit=1000,
-            filters={
-                "issue_type": f"eq.{issue}",
-                "city": city_filter,
-                "and": (
-                    f"(hour_utc.gte.{window_start.isoformat()},"
-                    f"hour_utc.lt.{window_end.isoformat()})"
-                ),
-            },
-        )
+        if not use_time_window:
+            rows = _supabase_get(
+                "issue_city_report_totals",
+                select="city,issue_type,total_reports,first_report_utc,last_report_utc,observed_hours",
+                order="total_reports.desc",
+                limit=1000,
+                filters={"issue_type": f"eq.{issue}"},
+            )
+        elif period["granularity"] == "hour":
+            rows = _supabase_get(
+                "hourly_issue_counts",
+                select="row_id,hour_utc,city,issue_type,n_reports",
+                order="hour_utc.desc",
+                limit=1000,
+                filters={
+                    "issue_type": f"eq.{issue}",
+                    "city": city_filter,
+                    "and": (
+                        f"(hour_utc.gte.{window_start.isoformat()},"
+                        f"hour_utc.lt.{window_end.isoformat()})"
+                    ),
+                },
+            )
+        else:
+            rows = _supabase_get_all(
+                "issue_city_report_daily",
+                select="city,issue_type,report_date,total_reports",
+                order="report_date.desc",
+                filters={
+                    "issue_type": f"eq.{issue}",
+                    "and": (
+                        f"(report_date.gte.{period['start_date']},"
+                        f"report_date.lt.{period['end_date']})"
+                    ),
+                },
+            )
     except Exception:
         return (
             f"I couldn't read CivicPulse Gold data for {issue} across cities, so I can't produce "
-            "a reliable ranking right now. Check the Supabase connection and table read permissions. "
-            "Reference: CivicPulse Gold hourly_issue_counts in Supabase."
+            "a reliable ranking. Check the Supabase connection and table read permissions. "
+            + "Ensure the aggregate views from supabase/issue_city_report_totals.sql exist. "
+            + "Reference: CivicPulse Gold in Supabase."
+        )
+
+    if not use_time_window:
+        city_totals: dict[str, int] = {}
+        total_periods: dict[str, tuple[object, object]] = {}
+        cities_with_rows: set[str] = set()
+        for row in rows:
+            city = row.get("city")
+            if city not in config.KNOWN_CITIES:
+                continue
+            try:
+                total = int(row.get("total_reports") or 0)
+            except (TypeError, ValueError):
+                continue
+            city_totals[city] = total
+            total_periods[city] = (row.get("first_report_utc"), row.get("last_report_utc"))
+            cities_with_rows.add(city)
+
+        freshness = _freshness_note(now_utc)
+        if not city_totals:
+            return (
+                f"CivicPulse Gold has no readable all-time {issue} news-report rows for configured "
+                f"cities, so it can't rank them. Missing rows do not prove there were no real-world "
+                f"incidents. {freshness} Reference: CivicPulse Gold hourly_issue_counts in Supabase."
+            )
+        highest_total = max(city_totals.values())
+        leaders = sorted(city for city, total in city_totals.items() if total == highest_total)
+        period_starts = [pd.to_datetime(pair[0], utc=True, errors="coerce") for pair in total_periods.values()]
+        period_ends = [pd.to_datetime(pair[1], utc=True, errors="coerce") for pair in total_periods.values()]
+        period_starts = [value for value in period_starts if not pd.isna(value)]
+        period_ends = [value for value in period_ends if not pd.isna(value)]
+        period_label = ""
+        if period_starts and period_ends:
+            period_label = (
+                f" across available Gold history from {_format_dual_time(min(period_starts))} "
+                f"to {_format_dual_time(max(period_ends))}"
+            )
+        return (
+            f"Among {len(cities_with_rows)} configured cities with {issue} rows in CivicPulse Gold, "
+            f"{' and '.join(leaders)} had the most CivicPulse news reports{period_label} "
+            f"({highest_total} reports). {freshness} These are classified news-report counts, "
+            "not confirmed incidents. Reference: CivicPulse Gold hourly_issue_counts in Supabase."
         )
 
     city_totals: dict[str, int] = {}
@@ -181,22 +526,30 @@ def _issue_city_ranking_answer(question: str) -> str | None:
     cities_with_rows: set[str] = set()
     for row in rows:
         city = row.get("city")
-        hour = pd.to_datetime(row.get("hour_utc"), utc=True, errors="coerce")
-        if city not in config.KNOWN_CITIES or pd.isna(hour):
+        if city not in config.KNOWN_CITIES:
             continue
-        hour_utc = hour.to_pydatetime()
-        if hour_utc >= window_end:
-            continue
-        count = int(row.get("n_reports") or 0)
+        if period["granularity"] == "hour":
+            hour = pd.to_datetime(row.get("hour_utc"), utc=True, errors="coerce")
+            if pd.isna(hour):
+                continue
+            hour_utc = hour.to_pydatetime()
+            if hour_utc >= window_end:
+                continue
+            count = int(row.get("n_reports") or 0)
+            if hour_utc == latest_complete_hour:
+                latest_hour_counts[city] = latest_hour_counts.get(city, 0) + count
+        else:
+            count = int(row.get("total_reports") or 0)
         city_totals[city] = city_totals.get(city, 0) + count
         cities_with_rows.add(city)
-        if hour_utc == latest_complete_hour:
-            latest_hour_counts[city] = latest_hour_counts.get(city, 0) + count
 
-    window_label = (
-        f"{_format_dual_time(window_start, '%d %b %Y %H:%M')} to "
-        f"{_format_dual_time(window_end, '%d %b %Y %H:%M')}"
-    )
+    if use_rolling_24h:
+        window_label = (
+            f"{_format_dual_time(window_start, '%d %b %Y %H:%M')} to "
+            f"{_format_dual_time(window_end, '%d %b %Y %H:%M')}"
+        )
+    else:
+        window_label = str(period["label"])
     latest_hour_label = (
         f"{_format_dual_time(latest_complete_hour, '%d %b %Y %H:%M')} to "
         f"{_format_dual_time(window_end, '%H:%M')}"
@@ -204,8 +557,8 @@ def _issue_city_ranking_answer(question: str) -> str | None:
     freshness = _freshness_note(now_utc)
     if not city_totals:
         return (
-            f"CivicPulse Gold has no readable {issue} news-report rows for the 24 complete hours "
-            f"from {window_label}, so it can't rank cities; missing rows do not prove there were "
+            f"CivicPulse Gold has no readable {issue} news-report rows for {window_label}, "
+            "so it can't rank cities; missing rows do not prove there were "
             f"no real-world incidents. {freshness} Reference: CivicPulse Gold hourly_issue_counts in Supabase."
         )
 
@@ -213,19 +566,24 @@ def _issue_city_ranking_answer(question: str) -> str | None:
     leaders = sorted(city for city, total in city_totals.items() if total == highest_total)
     leader_text = " and ".join(leaders)
     observed_city_count = len(cities_with_rows)
+    time_description = (
+        f"in the latest 24 complete hours ({window_label})"
+        if use_rolling_24h
+        else f"during {window_label}"
+    )
     answer = (
         f"Among {observed_city_count} configured cities with {issue} rows in CivicPulse Gold, "
-        f"{leader_text} had the most CivicPulse news reports in the 24-hour window "
-        f"{window_label} ({highest_total} reports)."
+        f"{leader_text} had the most CivicPulse news reports {time_description} "
+        f"({highest_total} reports)."
     )
-    if latest_hour_counts:
+    if use_rolling_24h and latest_hour_counts:
         hour_max = max(latest_hour_counts.values())
         hour_leaders = sorted(city for city, count in latest_hour_counts.items() if count == hour_max)
         answer += (
             f" In the latest complete hour ({latest_hour_label}), {', '.join(hour_leaders)} "
             f"had the most among cities with rows ({hour_max} reports)."
         )
-    else:
+    elif use_rolling_24h:
         answer += f" No {issue} rows were recorded in the latest complete hour ({latest_hour_label})."
     answer += (
         f" {freshness} These are classified news-report counts, not confirmed incidents. "
@@ -869,7 +1227,9 @@ if selected_stage == STAGE_ITEMS[6]:
         with st.chat_message("assistant"):
             try:
                 with st.spinner("Searching the knowledge base and Supabase evidence…"):
-                    response = _issue_city_ranking_answer(prompt)
+                    response = _issue_city_count_answer(prompt)
+                    if response is None:
+                        response = _issue_city_ranking_answer(prompt)
                     if response is None:
                         issue = _detect_issue_type(prompt)
                         evidence = retrieve_app_evidence(prompt)

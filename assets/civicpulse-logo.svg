@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="256" viewBox="0 0 960 256" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">CivicPulse</title>
+  <desc id="desc">CivicPulse logo: a city pin with a pulse line, paired with the CivicPulse wordmark.</desc>
+  <defs>
+    <linearGradient id="pulse" x1="35" y1="30" x2="213" y2="215" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38D6C2"/>
+      <stop offset="1" stop-color="#3A83F6"/>
+    </linearGradient>
+    <linearGradient id="signal" x1="69" y1="91" x2="178" y2="160" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7DF3DD"/>
+      <stop offset="1" stop-color="#FFFFFF"/>
+    </linearGradient>
+  </defs>
+  <!-- Location marker + civic skyline -->
+  <path d="M128 19c-50.8 0-92 40.7-92 91.1 0 63.1 77.3 119.3 85.8 125.3a10.3 10.3 0 0 0 12.4 0c8.5-6 85.8-62.2 85.8-125.3C220 59.7 178.8 19 128 19Z" fill="#102138" stroke="url(#pulse)" stroke-width="9"/>
+  <path d="M76 150v-25h22v25m8 0V93h23v57m9 0v-39h22v39m8 0v-20h13v20" stroke="#58718D" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Report pulse -->
+  <path d="M65 126h30l12-22 18 48 19-67 17 41h37" stroke="url(#signal)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="198" cy="126" r="6" fill="#38D6C2"/>
+  <!-- Wordmark -->
+  <text x="267" y="126" fill="#102138" font-family="Inter, Manrope, Arial, sans-serif" font-size="76" font-weight="750" letter-spacing="-3">Civic<tspan fill="#217A88">Pulse</tspan></text>
+  <text x="272" y="174" fill="#60758C" font-family="Inter, Manrope, Arial, sans-serif" font-size="21" font-weight="600" letter-spacing="4.2">CLEAR SIGNALS FOR BETTER CITIES</text>
+</svg>

@@ -7,6 +7,7 @@ __pycache__/
 *.py[cod]
 data/
 logs/
+presentation_output/
 
 # Keep only the main guide and setup guide in Git; ignore other Markdown files.
 *.md
