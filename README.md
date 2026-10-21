@@ -15,23 +15,47 @@ The Streamlit app has three main areas: **Overview**, **Ask CivicPulse**, and op
 
 ## How CivicPulse works
 
-```text
-FreeNewsAPI ─┐
-GDELT sample ├─> Bronze raw files + manifest ─> DuckDB: Bronze → Silver → Gold
-Open-Meteo ──┘                                  │
-                                                ├─> Poisson hourly forecasts
-PDFs + selected reference pages ─> Chroma RAG ─┤
-                                                └─> Supabase Gold + forecasts
-                                                        │
-                                             Streamlit app + OpenRouter answers
+### 1. Hourly data and forecast updates
+
+```mermaid
+flowchart TB
+    News[FreeNewsAPI<br/>recent news] --> Bronze[Bronze<br/>raw files + source manifest]
+    Events[GDELT<br/>sampled history] --> Bronze
+    Weather[Open-Meteo<br/>weather data] --> Bronze
+    Bronze --> Silver[Silver<br/>clean + standardize]
+    Silver --> Gates{Data quality<br/>checks pass?}
+    Gates -->|Yes| Gold[Gold tables<br/>issue events + hourly counts]
+    Gates -->|No| Hold[Stop this run<br/>keep last good data]
+    Gold --> Model[Poisson model<br/>estimate next 24 hours]
+    Gold --> Sync[Hourly sync to Supabase]
+    Model --> Sync
+    Sync --> Store[(Supabase<br/>Gold counts + forecasts)]
 ```
 
+News and sampled historical event data are preserved before they are cleaned. Quality checks protect the Gold tables; after Gold is built, the Poisson model creates experimental hourly report-count estimates. The scheduled workflow writes the counts and estimates to Supabase.
+
+### 2. How a chatbot answer is created
+
+```mermaid
+flowchart TB
+    User[User asks a question] --> App[Streamlit app]
+    App --> Docs[Search Chroma<br/>curated PDFs + reference pages]
+    App --> Data[Read Supabase<br/>matching counts or forecasts]
+    Docs --> Evidence[Relevant evidence<br/>with source details]
+    Data --> Evidence
+    Evidence --> LLM[OpenRouter<br/>write a grounded answer]
+    LLM --> Answer[Cited answer<br/>shown in Streamlit]
+```
+
+Document search supplies guidance and project context. Supabase supplies matching observed counts or saved forecasts when the question calls for them. OpenRouter writes an answer from the evidence it receives; it does not calculate report totals or forecasts. The Streamlit app displays the answer and references.
+
+### Main steps
+
 1. **Collect:** FreeNewsAPI provides recent Pakistan news articles, GDELT provides sampled historical event records, and Open-Meteo provides weather features.
-2. **Preserve and prepare:** raw responses and source provenance are retained in Bronze. Silver standardizes fields, deduplicates records, and records data-quality actions.
-3. **Build trusted tables:** quality gates check the data before Gold tables are created. Gold contains issue events, hourly report counts, freshness information, and model features.
-4. **Estimate:** the explainable Poisson regression uses Gold counts, city, issue group, hour/day, and available weather features. The scheduled job saves estimates for the next 24 hours with Poisson intervals.
-5. **Retrieve and answer:** RAG searches a curated document index. The app can also attach matching observed Gold counts or saved forecasts. OpenRouter turns that evidence into a concise cited answer; it should not calculate counts or invent facts.
-6. **Display:** the Streamlit app reads Gold counts and forecast rows from Supabase using its read-only key.
+2. **Prepare:** raw responses and provenance are retained in Bronze. Silver standardizes fields, deduplicates records, and records data-quality actions.
+3. **Check and summarize:** quality gates run before Gold tables are published. Gold contains issue events, hourly report counts, freshness information, and model features.
+4. **Estimate:** Poisson regression uses Gold counts, location, issue group, time, and available weather to estimate future report counts. Results include Poisson intervals.
+5. **Retrieve and answer:** RAG searches selected documents; the app adds relevant Supabase evidence. OpenRouter turns that evidence into a concise answer with references.
 
 ## Data and reference sources
 
