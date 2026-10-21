@@ -18,6 +18,8 @@ The explainable model is Poisson regression. It uses city, issue type, hour of d
 
 In the recorded evaluation, the complete test grid contained 996,824 rows but only 28 actual reports. The weekly seasonal-naive baseline (same city and issue, 168 hours earlier) achieved full-grid MAE 0.0000551752; Poisson regression achieved 0.0000690631. The baseline performed better, so CivicPulse does not claim that the Poisson model improves forecasting. See `MODEL_EVALUATION.md` for the evaluation details and group errors.
 
+The hourly job separately fits a rolling Poisson model using all available Gold observations through the latest completed observation hour. It selects regularization using a chronological validation split, fetches up to 48 hours of Open-Meteo forecast weather for supported cities (the scheduled job saves the next 24 hours), and writes expected news-report counts with central 95% Poisson intervals to `gold.poisson_forecasts`. If a city's forecast weather is unavailable, the model's training-fitted imputer supplies weather values. These are experimental forward estimates, not confirmed incidents or calibrated risk probabilities. The locked historical evaluation above remains the basis for performance claims; its results show that the baseline outperformed Poisson on the full grid.
+
 ## Known limitations and failure cases
 
 - The target is sparse, and zero-count grid cells dominate full-grid MAE.
@@ -30,4 +32,4 @@ In the recorded evaluation, the complete test grid contained 996,824 rows but on
 
 ## RAG use
 
-This card is reference context for the retrieval layer. Numeric report counts must be read from the current Gold tables and accompanied by their Gold row IDs. Do not treat the evaluation metrics above as live forecasts.
+This card is reference context for the retrieval layer. Observed numeric report counts must be read from Gold and accompanied by Gold row IDs. Live estimates must come from the latest `gold.poisson_forecasts` run, with forecast hour, interval, and forecast run ID. Do not present predictions as confirmed incidents or claim that the locked evaluation metrics are live forecasts.

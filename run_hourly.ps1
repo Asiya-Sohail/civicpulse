@@ -10,6 +10,10 @@ $LogFile = Join-Path $LogDir ("hourly-" + (Get-Date -Format "yyyy-MM-dd") + ".lo
 try {
     & $Python -m civicpulse data *>> $LogFile
     $Code = $LASTEXITCODE
+    if ($Code -eq 0) {
+        & $Python -m civicpulse forecast-model *>> $LogFile
+        $Code = $LASTEXITCODE
+    }
     "[$(Get-Date -Format o)] EXIT $Code" | Out-File -FilePath $LogFile -Append -Encoding utf8
     exit $Code
 }

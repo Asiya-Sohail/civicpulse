@@ -60,12 +60,13 @@ or connect SQLTools to the `.duckdb` file. Useful tables: `quality_log`, `silver
 
 The project includes `run_hourly.ps1`. It runs the same incremental job as `make data`,
 fetches FreeNewsAPI Pakistan articles and recent completed GDELT 15-minute slots, rebuilds the
-warehouse, and appends output to `logs/hourly-YYYY-MM-DD.log`. It does **not** download
+warehouse, fits the rolling Poisson model, saves its next 24 hours of forecasts, and appends output to `logs/hourly-YYYY-MM-DD.log`. It does **not** download
 the full historical GDELT window every hour.
 
 1. Run one successful manual test first:
    ```powershell
    .\.venv\Scripts\python.exe -m civicpulse data
+   .\.venv\Scripts\python.exe -m civicpulse forecast-model
    .\.venv\Scripts\python.exe -m civicpulse stats
    ```
 2. Open **Task Scheduler** → **Create Task** (not “Create Basic Task”).
@@ -93,7 +94,7 @@ are deduplicated during the warehouse build. GDELT's historical backfill is a sa
 
 The repository includes two workflows:
 
-- `.github/workflows/hourly-data.yml`: runs at minute 17 of every UTC hour, and can also be started with **Actions → CivicPulse hourly data → Run workflow**.
+- `.github/workflows/hourly-data.yml`: runs at minute 17 of every UTC hour, rebuilds Gold, evaluates the locked model, generates and saves next-24-hour Poisson forecasts, and can also be started with **Actions → CivicPulse Hourly Pipeline → Run workflow**.
 - `.github/workflows/hourly-watchdog.yml`: checks every 15 minutes and dispatches a recovery run if the hourly workflow is overdue or has failed.
 
 On the first runner without the `.gdelt-history-complete-v5` marker, the hourly workflow runs the
@@ -129,7 +130,7 @@ are restored and saved via separate cache restore/save actions.
 5. Runs a multilingual embedding model locally and saves the searchable vectors and metadata in Chroma under `data/rag/`.
 6. For a question, searches Chroma for relevant document chunks.
 7. For a question naming a recognized city or issue, reads matching **observed report counts** directly from `gold.hourly_issue_counts`. These are news-report counts, not confirmed incidents.
-8. For a question naming both a recognized city and issue, also computes matching Poisson **held-out historical test predictions** and 95% intervals. These are backtest results, not live future forecasts; they are computed at query time and are not saved in Gold.
+8. For a question naming both a recognized city and issue, retrieves that city's saved 24-hour Poisson forecasts and 95% intervals from `gold.poisson_forecasts`. Forecasts are produced by the hourly job and carry their generation time, training cutoff, and run ID.
 9. `rag-retrieve` displays the retrieved context only. `rag-answer` sends that context and the question to OpenRouter, which is instructed to answer from the supplied evidence, cite sources, and use the fallback message if the evidence is insufficient.
 
 ### Setup and commands (PowerShell)
@@ -146,7 +147,15 @@ To refresh the warehouse from its data sources, run:
 .\.venv\Scripts\python.exe -m civicpulse data
 ```
 
-This updates Gold data used for observed counts and model evaluation. Gold rows and Poisson backtest results are read/computed at query time; they are not stored in the vector index.
+This updates Gold data used for observed counts. The hourly workflow then fits the rolling model and saves its next 24 hours of forecasts to `gold.poisson_forecasts`. Gold rows and forecasts are read directly at query time; they are not stored in the document vector index.
+
+To create a forecast immediately outside the scheduled workflow, run:
+
+```powershell
+.\.venv\Scripts\python.exe -m civicpulse forecast-model
+```
+
+It uses the latest Gold observations, requests hourly forecast weather for supported cities, saves the next 24 hours into DuckDB, and keeps forecast runs for 30 days. Run `civicpulse data` first so the forecast uses the latest warehouse.
 
 Build or refresh the document index:
 
@@ -174,4 +183,4 @@ For a question about model results, include both a known city and issue, for exa
 .\.venv\Scripts\python.exe -m civicpulse rag-answer --question "What did the Poisson model predict for water reports in Karachi?"
 ```
 
-The answer includes source titles/publishers/URLs or stable Gold/model result IDs. If evidence is insufficient, it returns: `I currently don't have this knowledge. Please refer to the internet.` The current hourly data workflow does not automatically rebuild the RAG index or run the OpenRouter answer layer.
+The answer includes source titles/publishers/URLs or stable Gold/model result IDs. If evidence is insufficient, it returns: `I currently don't have this knowledge. Please refer to the internet.` The hourly workflow updates Gold and forecasts but does not rebuild document embeddings or run OpenRouter; RAG reads the newest Gold/forecast rows when a question is asked. Re-index documents only when reference content changes.

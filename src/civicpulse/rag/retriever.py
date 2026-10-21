@@ -79,64 +79,71 @@ def _gold_context(question: str, limit: int) -> list[RAGDocument]:
         con.close()
 
 
-def _poisson_backtest_context(question: str, limit: int) -> list[RAGDocument]:
-    """Return the model's held-out predictions for an explicitly named city and issue."""
+def _poisson_forecast_context(question: str, limit: int) -> list[RAGDocument]:
+    """Read the latest saved next-hour/day forecast for a named city and issue."""
     city, issue = _find_city_and_issue(question)
     if city is None or issue is None:
         return []
 
-    # The current modeling pipeline produces historical test predictions, not live forecasts.
-    from civicpulse.modeling import poisson_model
-
     con = db.connect()
     try:
-        selected = poisson_model.select_poisson_alpha(
-            con=con, cutoff_utc=config.FORECAST_CUTOFF_UTC
-        )
-        evaluated = poisson_model.evaluate_poisson_model(
-            con=con,
-            cutoff_utc=config.FORECAST_CUTOFF_UTC,
-            alpha=float(selected["selected_alpha"]),
-        )
+        exists = con.execute(
+            "SELECT count(*) FROM information_schema.tables "
+            "WHERE table_schema='gold' AND table_name='poisson_forecasts'"
+        ).fetchone()[0]
+        if not exists:
+            return []
+        rows = con.execute(
+            """SELECT forecast_run_id, generated_at_utc, forecast_for_utc, city, issue_type,
+                      expected_reports, lower_95, upper_95, training_cutoff_utc, training_rows,
+                      alpha, temperature_2m, precipitation, wind_speed_10m, weather_source_url
+               FROM gold.poisson_forecasts
+               WHERE forecast_run_id = (
+                   SELECT forecast_run_id FROM gold.poisson_forecasts
+                   ORDER BY generated_at_utc DESC LIMIT 1
+               ) AND city = ? AND issue_type = ?
+               ORDER BY forecast_for_utc LIMIT ?""",
+            [city, issue, limit],
+        ).fetchall()
     finally:
         con.close()
 
-    predictions = poisson_model.add_poisson_prediction_intervals(evaluated["predictions"])
-    selected_rows = predictions[
-        (predictions["city"] == city) & (predictions["issue_type"] == issue)
-    ].sort_values("hour_utc", ascending=False).head(limit)
-
     documents: list[RAGDocument] = []
-    for row in selected_rows.itertuples(index=False):
-        hour = row.hour_utc.isoformat() if hasattr(row.hour_utc, "isoformat") else str(row.hour_utc)
-        row_id = f"{city}_{issue}_{hour}"
+    for row in rows:
+        (run_id, generated, hour, row_city, row_issue, mean, low, high, cutoff,
+         train_rows, alpha, temperature, precipitation, wind_speed, weather_url) = row
+        hour = hour.isoformat() if hasattr(hour, "isoformat") else str(hour)
+        generated = generated.isoformat() if hasattr(generated, "isoformat") else str(generated)
+        cutoff = cutoff.isoformat() if hasattr(cutoff, "isoformat") else str(cutoff)
+        row_id = f"{run_id}_{row_city}_{row_issue}_{hour}"
         body = (
-            "Poisson model held-out backtest prediction (not a future/live forecast). "
-            f"City: {city}. Issue: {issue}. Test hour UTC: {hour}. "
-            f"Predicted report count: {row.prediction:.2f}; 95% prediction interval: "
-            f"{int(row.prediction_lower)} to {int(row.prediction_upper)}. "
-            f"Observed report count for evaluation: {int(row.n_reports)}. "
-            f"Absolute error: {row.absolute_error:.2f}. "
-            f"Training cutoff UTC: {config.FORECAST_CUTOFF_UTC}."
+            "CivicPulse Poisson model forecast for future hourly news-report counts; "
+            "this is a model estimate, not a confirmed incident count. "
+            f"City: {row_city}. Issue: {row_issue}. Forecast hour UTC: {hour}. "
+            f"Expected reports: {float(mean):.2f}; 95% prediction interval: {int(low)} to {int(high)}. "
+            f"Forecast generated UTC: {generated}. Training data cutoff UTC: {cutoff}. "
+            f"Training rows: {int(train_rows)}. Selected alpha: {float(alpha)}. "
+            f"Weather features used (temperature °C, precipitation mm, wind speed km/h): "
+            f"{temperature}, {precipitation}, {wind_speed}. "
+            f"Weather input source: {weather_url or 'not available; model imputed missing weather'}."
         )
         documents.append(RAGDocument(
-            document_id=f"poisson_backtest_{row_id}",
-            title="CivicPulse Poisson model held-out backtest result",
-            source_url=f"model://poisson_backtest/{row_id}",
-            publisher="CivicPulse model evaluation",
+            document_id=f"poisson_forecast_{row_id}",
+            title="CivicPulse Poisson hourly forecast",
+            source_url=f"model://gold.poisson_forecasts/{row_id}",
+            publisher="CivicPulse hourly forecasting pipeline",
             published_at=hour,
             accessed_at=utc_today(),
-            location=city,
+            location=row_city,
             text=body,
-            chunk_id=f"poisson_backtest_{row_id}",
-            evidence_type="model_backtest",
+            chunk_id=f"poisson_forecast_{row_id}",
+            evidence_type="model_forecast",
             row_id=row_id,
-            table_name="model_evaluation.poisson_backtest_predictions (computed at retrieval time)",
-            city=city,
-            issue_type=issue,
+            table_name="gold.poisson_forecasts",
+            city=row_city,
+            issue_type=row_issue,
             hour_utc=hour,
-            n_reports=int(row.n_reports),
-            license_terms="CivicPulse model output; held-out historical evaluation, not a live forecast.",
+            license_terms="CivicPulse model output; forecast of news-report counts, not confirmed events.",
         ))
     return documents
 
@@ -166,8 +173,8 @@ def retrieve_evidence(question: str, top_k: int = 5) -> list[dict]:
     # Exact Gold rows are appended separately so every numeric claim has a stable row ID.
     for record in _gold_context(question, limit=top_k):
         evidence.append({"text": record.text, "metadata": record.as_vector_metadata(), "distance": None})
-    # Add actual model output only for questions that name both a known city and issue.
-    for record in _poisson_backtest_context(question, limit=min(top_k, 12)):
+    # Add saved future model output only for questions naming both a known city and issue.
+    for record in _poisson_forecast_context(question, limit=min(top_k, 24)):
         evidence.append({"text": record.text, "metadata": record.as_vector_metadata(), "distance": None})
     return evidence
 
@@ -177,7 +184,7 @@ def retrieve_context(question: str, top_k: int = 5) -> str:
     blocks: list[str] = []
     for item in retrieve_evidence(question, top_k):
         metadata, text = item["metadata"], item["text"]
-        if metadata.get("evidence_type") in {"gold_row", "model_backtest"}:
+        if metadata.get("evidence_type") in {"gold_row", "model_forecast"}:
             blocks.append(
                 "[CIVICPULSE STRUCTURED MODEL/DATA RESULT]\n"
                 f"Table: {metadata.get('table_name')}\nRow ID: {metadata.get('row_id')}\n"

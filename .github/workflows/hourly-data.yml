@@ -107,6 +107,9 @@ jobs:
       - name: Retrain and evaluate model
         run: python -m civicpulse evaluate-model
 
+      - name: Fit current Poisson model and save next 24 hours of forecasts
+        run: python -m civicpulse forecast-model
+
       - name: Save warehouse state for next run
         uses: actions/cache/save@v4
         if: always()

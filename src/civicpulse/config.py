@@ -47,6 +47,7 @@ GDELT_LICENSE = (
 )
 # ---- Source 3: Open-Meteo historical weather -------------------------------
 OPEN_METEO_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
+OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 OPEN_METEO_LICENSE = (
     "Open-Meteo historical weather data under CC BY 4.0; "
     "credit Open-Meteo and the underlying weather data providers."

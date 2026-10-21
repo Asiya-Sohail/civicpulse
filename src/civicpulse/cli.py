@@ -188,6 +188,10 @@ def main() -> None:
     "evaluate-model",
     help="retrain and evaluate the model on the locked test period",
 )
+    sub.add_parser(
+        "forecast-model",
+        help="fit on current Gold data and save the next 24 hours of Poisson forecasts",
+    )
     a = p.parse_args()
 
     if a.cmd == "data":
@@ -244,6 +248,16 @@ def main() -> None:
         print(answer_question(a.question, top_k=a.top_k))
     elif a.cmd == "evaluate-model":
         _evaluate_model()
+    elif a.cmd == "forecast-model":
+        from civicpulse.modeling.forecast import generate_hourly_forecasts
+        con = db.connect()
+        try:
+            result = generate_hourly_forecasts(con)
+        finally:
+            con.close()
+        print("Hourly Poisson forecasts saved:")
+        for key, value in result.items():
+            print(f"  {key}: {value}")
 
 
 if __name__ == "__main__":

@@ -15,11 +15,11 @@ Committed as the initial source declaration. No synthetic data is used. No Kaggl
 
 | Field | Details |
 |---|---|
-| Name | Open-Meteo Historical Weather API |
-| URL | https://open-meteo.com/en/docs/historical-weather-api |
-| Use | Hourly temperature, precipitation and wind speed for Pakistan city coordinates |
+| Name | Open-Meteo Historical Weather API and Forecast API |
+| URL | https://open-meteo.com/en/docs/historical-weather-api and https://open-meteo.com/en/docs |
+| Use | Historical hourly weather for model training; hourly forecast temperature, precipitation and wind speed for the next-24-hour Poisson forecast |
 | Licence | CC BY 4.0; credit Open-Meteo and the underlying data providers |
-| Frequency | Historical hourly archive |
+| Frequency | Historical archive is loaded for the training window; forecast endpoint is queried during each hourly model run |
 | Role | Independent weather features; it does not label civic-issue events |
 
 Weather values will be joined to the Gold hourly timeline by UTC hour and city. The source URL, query, fetch time, SHA-256 and licence will be recorded in the manifest when this source is ingested.Current ingestion coverage: 12 recognized Pakistan cities, with hourly observations covering the civic-event window from 2024-10-11 through 2026-10-19. The stored weather feature table contains 212,880 rows. Karachi also retains a separate two-day validation sample from 2024-10-08 through 2024-10-09.
