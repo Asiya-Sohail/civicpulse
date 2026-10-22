@@ -5,6 +5,7 @@ import os
 import json
 import re
 import calendar
+import html
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -606,6 +607,23 @@ def load_recent_counts(limit: int = 500) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=300, show_spinner=False)
+def load_recent_gold_news(limit: int = 3) -> pd.DataFrame:
+    """Load a few latest individual, classified news reports from Gold issue_events."""
+    records = _supabase_get(
+        "issue_events",
+        select="row_id,title,url,publisher,published_utc,city,issue_type",
+        order="published_utc.desc",
+        limit=limit,
+        filters={"issue_type": "neq.Other", "title": "not.is.null"},
+    )
+    frame = pd.DataFrame(records)
+    if not frame.empty:
+        frame["published_utc"] = pd.to_datetime(frame["published_utc"], utc=True, errors="coerce")
+        frame = frame.sort_values("published_utc", ascending=False, na_position="last").head(limit)
+    return frame
+
+
+@st.cache_data(ttl=300, show_spinner=False)
 def load_recent_forecasts(limit: int = 1000) -> pd.DataFrame:
     fields = (
         "forecast_run_id,generated_at_utc,forecast_for_utc,city,issue_type,"
@@ -849,6 +867,13 @@ html, body, [class*="css"] { font-family:Inter,"Segoe UI",ui-sans-serif,system-u
 .home-band { background:linear-gradient(110deg,#e8f1ff,#edf7f6); border:1px solid #dce8f4; border-radius:20px; padding:1.2rem 1.35rem; margin:1rem 0; }
 .home-band h3 { margin:0 0 .35rem; color:var(--ink); font-size:1.05rem; }
 .home-band p { margin:0; color:#596a80; line-height:1.6; }
+.news-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.85rem; margin:.85rem 0 1.15rem; }
+.news-card { display:flex; flex-direction:column; min-height:190px; background:rgba(255,255,255,.92); border:1px solid var(--line); border-radius:18px; padding:1rem 1.05rem; box-shadow:0 8px 24px #1e35510a; }
+.news-meta { color:#247c82; font-size:.68rem; font-weight:750; letter-spacing:.09em; text-transform:uppercase; }
+.news-title { color:var(--ink); font:700 1rem/1.45 Inter,"Segoe UI",sans-serif; margin:.55rem 0 .8rem; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+.news-footer { margin-top:auto; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:.4rem; color:var(--muted); font-size:.76rem; }
+.news-link { color:#2860bd; font-weight:700; text-decoration:none; }
+.news-link:hover { text-decoration:underline; }
 .topic-pills { display:flex; flex-wrap:wrap; gap:.5rem; margin:.85rem 0 1.1rem; }
 .topic-pill { color:#27466a; background:#eaf1fb; border:1px solid #d7e3f3; padding:.42rem .72rem; border-radius:999px; font-size:.82rem; font-weight:650; }
 .overview-cta { display:flex; align-items:center; justify-content:space-between; gap:1rem; background:#fff; border:1px solid var(--line); border-radius:18px; padding:1rem 1.15rem; box-shadow:0 8px 24px #1e35510a; }
@@ -897,6 +922,7 @@ div[data-testid="stMetricValue"] { color:var(--ink); font-family:Inter,"Segoe UI
 div[data-testid="stChatMessage"] { border:1px solid var(--line); border-radius:18px; box-shadow:0 4px 16px #1e35510a; }
 div[data-testid="stChatInput"] { border-radius:16px; box-shadow:0 8px 24px #1e355114; }
 @media (max-width:760px) { .home-grid { grid-template-columns:1fr; }
+  .news-grid { grid-template-columns:1fr; }
   .step-flow { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .block-container { padding-left:.8rem; padding-right:.8rem; }
   section[data-testid="stSidebar"] { min-width:250px; }
@@ -978,6 +1004,36 @@ if data_error:
 # 01 — Overview: purpose first, technical detail on request
 if selected_page == "Overview":
     st.markdown('<div class="topic-pills"><span class="topic-pill">Water</span><span class="topic-pill">Electricity</span><span class="topic-pill">Roads & travel</span><span class="topic-pill">City services</span></div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-heading">Recent news reports</div><p class="section-subtitle">A few of the latest reports classified in CivicPulse Gold. Open the original article for the full story.</p>', unsafe_allow_html=True)
+    try:
+        recent_news = load_recent_gold_news(3)
+        if recent_news.empty:
+            st.info("No classified news reports are available in Gold yet.")
+        else:
+            cards = []
+            for _, report in recent_news.iterrows():
+                title = html.escape(str(report.get("title") or "Untitled news report"))
+                issue = html.escape(str(report.get("issue_type") or "Civic issue"))
+                city = html.escape(str(report.get("city") or "Location unavailable"))
+                publisher = html.escape(str(report.get("publisher") or "News source"))
+                published = report.get("published_utc")
+                date_label = "Date unavailable" if pd.isna(published) else html.escape(
+                    _format_dual_time(published, "%d %b %Y · %H:%M")
+                )
+                source_url = str(report.get("url") or "").strip()
+                if source_url.startswith(("https://", "http://")):
+                    safe_url = html.escape(source_url, quote=True)
+                    source_link = f'<a class="news-link" href="{safe_url}" target="_blank" rel="noopener noreferrer">Read source ↗</a>'
+                else:
+                    source_link = ""
+                cards.append(
+                    f'<article class="news-card"><div class="news-meta">{issue} <span aria-hidden="true">·</span> {city}</div>'
+                    f'<div class="news-title">{title}</div><div class="news-footer">'
+                    f'<span>{publisher}<br>{date_label}</span>{source_link}</div></article>'
+                )
+            st.markdown('<div class="news-grid">' + "".join(cards) + "</div>", unsafe_allow_html=True)
+    except Exception:
+        st.info("Recent Gold news reports are temporarily unavailable.")
     st.markdown('<div class="section-heading">Why CivicPulse?</div><p class="section-subtitle">Public-service information is spread across news, weather, and official guidance. CivicPulse brings these signals together so people can understand what is being reported and find useful, sourced information.</p>', unsafe_allow_html=True)
     st.markdown('''<div class="home-grid">
       <div class="home-card"><div class="kicker">01 · Bring signals together</div><h3>Reports, place, and time</h3><p>News, weather, and historical event data are organized into four public-service topics and grouped by location and hour.</p></div>
