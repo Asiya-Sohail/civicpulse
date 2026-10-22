@@ -1,4 +1,3 @@
-.env
 .streamlit/secrets.toml
 .venv/
 __pycache__/
@@ -14,3 +13,5 @@ presentation_output/
 !README.md
 !SETUP.md
 !DATA_SOURCES.md
+config.bat
+node_modules
