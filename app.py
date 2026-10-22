@@ -421,7 +421,7 @@ def _issue_city_count_answer(question: str) -> str | None:
 
 
 def _issue_city_ranking_answer(question: str) -> str | None:
-    """Rank issue counts over all Gold history or the period named in the question."""
+    """Rank Gold hourly counts directly; never ask the LLM to calculate totals."""
     issue = _detect_issue_type(question)
     if issue is None or not _is_city_ranking_question(question):
         return None
@@ -436,113 +436,50 @@ def _issue_city_ranking_answer(question: str) -> str | None:
     window_end = period.get("end") if use_time_window else None
     city_filter = "in.(" + ",".join(f'"{city}"' for city in config.KNOWN_CITIES) + ")"
     try:
-        if not use_time_window:
-            rows = _supabase_get(
-                "issue_city_report_totals",
-                select="city,issue_type,total_reports,first_report_utc,last_report_utc,observed_hours",
-                order="total_reports.desc",
-                limit=1000,
-                filters={"issue_type": f"eq.{issue}"},
+        filters = {"issue_type": f"eq.{issue}", "city": city_filter}
+        if use_time_window:
+            filters["and"] = (
+                f"(hour_utc.gte.{window_start.isoformat()},"
+                f"hour_utc.lt.{window_end.isoformat()})"
             )
-        elif period["granularity"] == "hour":
-            rows = _supabase_get(
-                "hourly_issue_counts",
-                select="row_id,hour_utc,city,issue_type,n_reports",
-                order="hour_utc.desc",
-                limit=1000,
-                filters={
-                    "issue_type": f"eq.{issue}",
-                    "city": city_filter,
-                    "and": (
-                        f"(hour_utc.gte.{window_start.isoformat()},"
-                        f"hour_utc.lt.{window_end.isoformat()})"
-                    ),
-                },
-            )
-        else:
-            rows = _supabase_get_all(
-                "issue_city_report_daily",
-                select="city,issue_type,report_date,total_reports",
-                order="report_date.desc",
-                filters={
-                    "issue_type": f"eq.{issue}",
-                    "and": (
-                        f"(report_date.gte.{period['start_date']},"
-                        f"report_date.lt.{period['end_date']})"
-                    ),
-                },
-            )
+        # Read the source Gold count table in pages instead of relying on aggregate
+        # views. Each row is an hourly city/issue aggregate, with n_reports as count.
+        rows = _supabase_get_all(
+            "hourly_issue_counts",
+            select="row_id,hour_utc,city,issue_type,n_reports",
+            order="hour_utc.desc",
+            filters=filters,
+        )
     except Exception:
         return (
-            f"I couldn't read CivicPulse Gold data for {issue} across cities, so I can't produce "
-            "a reliable ranking. Check the Supabase connection and table read permissions. "
-            + "Ensure the aggregate views from supabase/issue_city_report_totals.sql exist. "
-            + "Reference: CivicPulse Gold in Supabase."
-        )
-
-    if not use_time_window:
-        city_totals: dict[str, int] = {}
-        total_periods: dict[str, tuple[object, object]] = {}
-        cities_with_rows: set[str] = set()
-        for row in rows:
-            city = row.get("city")
-            if city not in config.KNOWN_CITIES:
-                continue
-            try:
-                total = int(row.get("total_reports") or 0)
-            except (TypeError, ValueError):
-                continue
-            city_totals[city] = total
-            total_periods[city] = (row.get("first_report_utc"), row.get("last_report_utc"))
-            cities_with_rows.add(city)
-
-        freshness = _freshness_note(now_utc)
-        if not city_totals:
-            return (
-                f"CivicPulse Gold has no readable all-time {issue} news-report rows for configured "
-                f"cities, so it can't rank them. Missing rows do not prove there were no real-world "
-                f"incidents. {freshness} Reference: CivicPulse Gold hourly_issue_counts in Supabase."
-            )
-        highest_total = max(city_totals.values())
-        leaders = sorted(city for city, total in city_totals.items() if total == highest_total)
-        period_starts = [pd.to_datetime(pair[0], utc=True, errors="coerce") for pair in total_periods.values()]
-        period_ends = [pd.to_datetime(pair[1], utc=True, errors="coerce") for pair in total_periods.values()]
-        period_starts = [value for value in period_starts if not pd.isna(value)]
-        period_ends = [value for value in period_ends if not pd.isna(value)]
-        period_label = ""
-        if period_starts and period_ends:
-            period_label = (
-                f" across available Gold history from {_format_dual_time(min(period_starts))} "
-                f"to {_format_dual_time(max(period_ends))}"
-            )
-        return (
-            f"Among {len(cities_with_rows)} configured cities with {issue} rows in CivicPulse Gold, "
-            f"{' and '.join(leaders)} had the most CivicPulse news reports{period_label} "
-            f"({highest_total} reports). {freshness} These are classified news-report counts, "
-            "not confirmed incidents. Reference: CivicPulse Gold hourly_issue_counts in Supabase."
+            f"I couldn't read {issue} counts from CivicPulse Gold, so I can't compare cities. "
+            "Check that the Supabase app key can read the public.hourly_issue_counts table. "
+            "Reference: CivicPulse Gold hourly_issue_counts in Supabase."
         )
 
     city_totals: dict[str, int] = {}
     latest_hour_counts: dict[str, int] = {}
-    cities_with_rows: set[str] = set()
     for row in rows:
         city = row.get("city")
         if city not in config.KNOWN_CITIES:
             continue
-        if period["granularity"] == "hour":
-            hour = pd.to_datetime(row.get("hour_utc"), utc=True, errors="coerce")
-            if pd.isna(hour):
-                continue
-            hour_utc = hour.to_pydatetime()
-            if hour_utc >= window_end:
-                continue
-            count = int(row.get("n_reports") or 0)
-            if hour_utc == latest_complete_hour:
-                latest_hour_counts[city] = latest_hour_counts.get(city, 0) + count
-        else:
-            count = int(row.get("total_reports") or 0)
+        hour = pd.to_datetime(row.get("hour_utc"), utc=True, errors="coerce")
+        if pd.isna(hour):
+            continue
+        hour_utc = hour.to_pydatetime()
+        count = int(row.get("n_reports") or 0)
         city_totals[city] = city_totals.get(city, 0) + count
-        cities_with_rows.add(city)
+        if use_rolling_24h and hour_utc == latest_complete_hour:
+            latest_hour_counts[city] = latest_hour_counts.get(city, 0) + count
+
+    freshness = _freshness_note(now_utc)
+    if not city_totals:
+        timeframe = str(period["label"]) if use_time_window else "all available Gold history"
+        return (
+            f"CivicPulse Gold has no {issue} report rows for configured cities during {timeframe}, "
+            "so there is no supported city comparison. Missing rows do not prove there were no "
+            "real-world incidents. Reference: CivicPulse Gold hourly_issue_counts in Supabase."
+        )
 
     if use_rolling_24h:
         window_label = (
@@ -550,27 +487,21 @@ def _issue_city_ranking_answer(question: str) -> str | None:
             f"{_format_dual_time(window_end, '%d %b %Y %H:%M')}"
         )
     else:
-        window_label = str(period["label"])
-    latest_hour_label = (
-        f"{_format_dual_time(latest_complete_hour, '%d %b %Y %H:%M')} to "
-        f"{_format_dual_time(window_end, '%H:%M')}"
-    )
-    freshness = _freshness_note(now_utc)
-    if not city_totals:
-        return (
-            f"CivicPulse Gold has no readable {issue} news-report rows for {window_label}, "
-            "so it can't rank cities; missing rows do not prove there were "
-            f"no real-world incidents. {freshness} Reference: CivicPulse Gold hourly_issue_counts in Supabase."
+        window_label = str(period.get("label") or "all available Gold history")
+    latest_hour_label = ""
+    if use_rolling_24h:
+        latest_hour_label = (
+            f"{_format_dual_time(latest_complete_hour, '%d %b %Y %H:%M')} to "
+            f"{_format_dual_time(window_end, '%H:%M')}"
         )
-
     highest_total = max(city_totals.values())
     leaders = sorted(city for city, total in city_totals.items() if total == highest_total)
     leader_text = " and ".join(leaders)
-    observed_city_count = len(cities_with_rows)
+    observed_city_count = len(city_totals)
     time_description = (
         f"in the latest 24 complete hours ({window_label})"
         if use_rolling_24h
-        else f"during {window_label}"
+        else f"during {window_label}" if use_time_window else "across all available Gold history"
     )
     answer = (
         f"Among {observed_city_count} configured cities with {issue} rows in CivicPulse Gold, "
@@ -1251,8 +1182,8 @@ if selected_stage == STAGE_ITEMS[4]:
 
 # 06 — GenAI
 if selected_stage == STAGE_ITEMS[5]:
-    st.markdown('<div class="stage-note" style="border-color:var(--pink)"><h3>06 · Generative answer layer</h3><p>OpenRouter turns retrieved evidence into concise prose. Gold-data rankings are calculated directly before the answer is written.</p></div>', unsafe_allow_html=True)
-    st.markdown('<div class="step-flow"><div class="step"><b>Question</b><strong>Route by intent</strong><span>Guidance questions search documents; city comparisons query Gold tables.</span></div><div class="step"><b>Evidence</b><strong>Context is assembled</strong><span>RAG supplies source passages; structured queries supply exact counts and timestamps.</span></div><div class="step"><b>OpenRouter</b><strong>Answer is drafted</strong><span>The LLM explains retrieved evidence; it does not calculate rankings or forecasts.</span></div><div class="step"><b>Grounding</b><strong>References are shown</strong><span>Missing topic evidence gets a clear unavailable message and an official link.</span></div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="stage-note" style="border-color:var(--pink)"><h3>06 · Generative answer layer</h3><p>OpenRouter turns retrieved guidance into concise prose. City rankings are calculated from Gold count rows and returned directly, without sending the ranking to the language model.</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="step-flow"><div class="step"><b>Question</b><strong>Route by intent</strong><span>Guidance questions search documents; city comparisons query Gold count rows directly.</span></div><div class="step"><b>Evidence</b><strong>Context is assembled</strong><span>RAG supplies source passages; structured queries supply exact counts and timestamps.</span></div><div class="step"><b>OpenRouter</b><strong>Guidance is explained</strong><span>The LLM writes grounded guidance answers; it does not calculate or rewrite city rankings.</span></div><div class="step"><b>Grounding</b><strong>References are shown</strong><span>Missing topic evidence gets a clear unavailable message and an official link.</span></div></div>', unsafe_allow_html=True)
     left,right=st.columns([1.2,1])
     with left:
         st.markdown("#### What the AI does")
